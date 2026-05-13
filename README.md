@@ -147,6 +147,7 @@ LLM/
 | [README.md](README.md) | 全員 | 概要、入口（このファイル） |
 | [app/README.md](app/README.md) | 動かしたい人 | 起動・操作・トラブルシュート |
 | [app/docs/architecture.md](app/docs/architecture.md) | 開発者 | システム図、モジュール責務、データフロー、データモデル、SSE プロトコル、設計判断、拡張ガイド |
+| **[app/docs/feedback-architecture.md](app/docs/feedback-architecture.md)** | **引き継ぎ担当者必読** | **LLM フィードバック設計の核心。Validator の役割、System/User メッセージの分担、失敗記憶の実体、アンチパターン** |
 | [CLAUDE.md](CLAUDE.md) | Claude Code 別セッション | 既知の罠、規約、設計判断のサマリ |
 
 ---
