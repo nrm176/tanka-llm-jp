@@ -1,0 +1,85 @@
+# Docker Compose orchestration for the tanka chat stack.
+#
+# 使い方:
+#   docker compose up --build           # 起動 (初回はビルド)
+#   docker compose up                   # 起動
+#   docker compose down                 # 停止
+#   docker compose down -v              # 停止 + ボリューム削除 (DB データも消える)
+#
+# LM Studio はホスト側 (macOS) で動かし続ける前提:
+#   lms server start
+# backend コンテナは host.docker.internal:1234 で LM Studio に到達する。
+#
+# ホスト側で 27017 / 8001 / 5178 が空いていることが必要。
+
+services:
+  mongo:
+    image: mongo:8.0
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    # 走っている LLM タスクが partial save / cancel ハンドラを完了するための余裕。
+    # SIGTERM 受信から SIGKILL までの時間。lifespan 側は SHUTDOWN_GRACE_SECONDS=25 で待つ。
+    stop_grace_period: 30s
+    volumes:
+      - ./backend:/app
+      - backend_venv:/app/.venv  # ホストの .venv (arm64 macOS) と分離
+    ports:
+      - "8001:8001"
+    environment:
+      LM_STUDIO_URL: http://host.docker.internal:1234/v1
+      LM_STUDIO_MODEL: llm-jp-4-8b-thinking
+      MONGO_URL: mongodb://mongo:27017
+      MONGO_DB: tanka_chat
+      REDIS_URL: redis://redis:6379/0
+    extra_hosts:
+      # Linux でも host.docker.internal が解決されるように
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules  # コンテナ内 node_modules を保護
+    ports:
+      - "5178:5178"
+    environment:
+      BACKEND_URL: http://backend:8001
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:
+  backend_venv:
+  frontend_node_modules:

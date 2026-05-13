@@ -1,0 +1,321 @@
+"""FastAPI アプリ。
+
+エンドポイント:
+- GET    /api/health               LM Studio + MongoDB + Redis のヘルス
+- GET    /api/sessions             セッション一覧 (active_task_id 付き)
+- POST   /api/sessions             新規セッション作成
+- GET    /api/sessions/{sid}       セッション全体 (メッセージ込み)
+- PATCH  /api/sessions/{sid}       タイトル更新
+- DELETE /api/sessions/{sid}       削除
+- GET    /api/sessions/{sid}/active-task   進行中タスクがあれば {task_id, kind} を返す
+
+- POST   /api/chat                 チャットタスク作成 → {task_id} を即返す (LLM はバックグラウンド)
+- POST   /api/tanka                短歌タスク作成 → {task_id}
+- GET    /api/tasks/{tid}/stream   SSE: タスクのイベントストリーム (replay+ライブ)
+- POST   /api/tasks/{tid}/cancel   実行中タスクのキャンセル
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import sys
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any, Literal
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+import db
+import bus as q
+import tanka
+import tasks
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+    stream=sys.stdout,
+)
+log = logging.getLogger("app")
+
+
+SHUTDOWN_GRACE_SECONDS = 25  # docker stop_grace_period (30s) より少し短く取る
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ── startup ──
+    # 前回の再起動で取り残された "running" 状態のタスクを掃除
+    n = db.fail_orphaned_tasks()
+    if n > 0:
+        log.info("marked %d orphaned tasks as failed on startup", n)
+
+    yield
+
+    # ── shutdown (graceful) ──
+    # 走っているタスクをキャンセルし、各タスクの except asyncio.CancelledError ブロック
+    # で partial save が走るのを待つ。タイムアウト超過分は db.fail_orphaned_tasks() で
+    # 後始末するので、最悪ケースでも DB 状態は一貫する。
+    cancelled = await tasks.cancel_all()
+    if cancelled:
+        log.info(
+            "shutdown: cancelling %d running task(s); waiting up to %ds for cleanup",
+            cancelled, SHUTDOWN_GRACE_SECONDS,
+        )
+        deadline = time.monotonic() + SHUTDOWN_GRACE_SECONDS
+        while tasks.count_running() > 0 and time.monotonic() < deadline:
+            await asyncio.sleep(0.2)
+        remaining = tasks.count_running()
+        if remaining > 0:
+            log.warning(
+                "shutdown: %d task(s) did not finish cleanup within grace period; "
+                "will be marked failed", remaining,
+            )
+
+    # cleanup handler が走らずに残ったものを failed に倒す (整合性保証)
+    db.fail_orphaned_tasks()
+    await q.close()
+    log.info("shutdown complete")
+
+
+app = FastAPI(title="Tanka Backend", version="0.3.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ─── Request models ───
+
+class ChatRequest(BaseModel):
+    session_id: str
+    user_message: str
+    mode: Literal["normal", "tanka"] = "normal"
+
+
+class TankaRequest(BaseModel):
+    session_id: str
+    theme: str = Field(..., min_length=1)
+    # None なら無制限 (plateau 検知のみ。最後の安全網は HARD_CAP=50)。
+    # 数値を指定すると refine 回数の上限になる (旧来の固定回数挙動)。
+    max_refines: int | None = Field(None, ge=0, le=500)
+
+
+class CreateSessionRequest(BaseModel):
+    title: str | None = None
+
+
+class UpdateTitleRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=120)
+
+
+# ─── SSE helpers ───
+
+def _format_sse(event: dict[str, Any]) -> str:
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+def _sse_headers() -> dict[str, str]:
+    return {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+
+
+# ─── Health ───
+
+@app.get("/api/health")
+async def health() -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "lm_studio_url": tanka.LM_STUDIO_URL,
+        "configured_model": tanka.MODEL,
+        "mongo_url": db.MONGO_URL,
+        "mongo_db": db.MONGO_DB,
+        "mongo_ok": db.ping(),
+        "redis_url": q.REDIS_URL,
+        "redis_ok": await q.ping(),
+    }
+    try:
+        models = tanka.client.models.list()
+        ids = [m.id for m in models.data]
+        out["lm_studio_ok"] = True
+        out["available_models"] = ids
+        out["model_loaded"] = tanka.MODEL in ids
+    except Exception as e:
+        log.warning("LM Studio health check failed: %s", e)
+        out["lm_studio_ok"] = False
+        out["lm_studio_error"] = str(e)
+
+    out["status"] = "ok" if (out["mongo_ok"] and out["redis_ok"] and out.get("lm_studio_ok")) else "degraded"
+    return out
+
+
+# ─── Sessions CRUD ───
+
+@app.get("/api/sessions")
+async def get_sessions() -> list[dict]:
+    sessions = db.list_sessions()
+    # 各セッションについて active task があれば追加
+    for s in sessions:
+        active = db.find_active_task(s["id"])
+        s["active_task"] = (
+            {"task_id": active["id"], "kind": active.get("kind")}
+            if active else None
+        )
+    return sessions
+
+
+@app.post("/api/sessions")
+async def post_session(req: CreateSessionRequest) -> dict:
+    return db.create_session(title=req.title)
+
+
+@app.get("/api/sessions/{sid}")
+async def get_one_session(sid: str) -> dict:
+    s = db.get_session(sid)
+    if not s:
+        raise HTTPException(status_code=404, detail="session not found")
+    return s
+
+
+@app.patch("/api/sessions/{sid}")
+async def patch_session(sid: str, req: UpdateTitleRequest) -> dict:
+    db.update_session_title(sid, req.title)
+    s = db.get_session(sid)
+    if not s:
+        raise HTTPException(status_code=404, detail="session not found")
+    return s
+
+
+@app.delete("/api/sessions/{sid}")
+async def delete_session_endpoint(sid: str) -> dict:
+    # 進行中タスクがあれば先にキャンセル
+    active = db.find_active_task(sid)
+    if active:
+        await tasks.cancel_task(active["id"])
+    ok = db.delete_session(sid)
+    if not ok:
+        raise HTTPException(status_code=404, detail="session not found")
+    return {"deleted": sid}
+
+
+@app.get("/api/sessions/{sid}/active-task")
+async def get_active_task(sid: str) -> dict:
+    active = db.find_active_task(sid)
+    if not active:
+        return {"task_id": None}
+    return {"task_id": active["id"], "kind": active.get("kind")}
+
+
+# ─── Task creation (LLM はバックグラウンド) ───
+
+@app.post("/api/chat")
+async def chat(req: ChatRequest) -> dict:
+    if not db.get_session(req.session_id):
+        raise HTTPException(status_code=404, detail="session not found")
+    # 同一セッションで既に走っている場合は拒否 (UI 側で防ぐが二重保険)
+    if db.find_active_task(req.session_id):
+        raise HTTPException(status_code=409, detail="another task is already running for this session")
+
+    # ユーザーメッセージを即時保存
+    db.append_message(req.session_id, {"kind": "user", "content": req.user_message})
+    # タスクレコード作成 → asyncio.Task 起動
+    task = db.create_task(req.session_id, kind="chat", input_data={"mode": req.mode})
+    tasks.start_chat(task["id"], req.session_id, req.user_message, req.mode)
+
+    return {"task_id": task["id"], "session_id": req.session_id, "kind": "chat"}
+
+
+@app.post("/api/tanka")
+async def tanka_endpoint(req: TankaRequest) -> dict:
+    if not db.get_session(req.session_id):
+        raise HTTPException(status_code=404, detail="session not found")
+    if db.find_active_task(req.session_id):
+        raise HTTPException(status_code=409, detail="another task is already running for this session")
+
+    db.append_message(req.session_id, {"kind": "user", "content": f"tanka:{req.theme}"})
+    task = db.create_task(req.session_id, kind="tanka", input_data={"theme": req.theme, "max_refines": req.max_refines})
+    tasks.start_tanka(task["id"], req.session_id, req.theme, req.max_refines)
+
+    return {"task_id": task["id"], "session_id": req.session_id, "kind": "tanka"}
+
+
+# ─── Task streaming (SSE) ───
+
+@app.get("/api/tasks/{tid}/stream")
+async def stream_task(tid: str) -> StreamingResponse:
+    task = db.get_task(tid)
+    if not task:
+        raise HTTPException(status_code=404, detail="task not found")
+
+    async def emit() -> AsyncIterator[str]:
+        # 接続時点のスナップショットを最初に送って、フロントが種別を知れるように。
+        yield _format_sse({
+            "type": "task_meta",
+            "task_id": tid,
+            "kind": task.get("kind"),
+            "session_id": task.get("session_id"),
+            "status": task.get("status"),
+        })
+
+        last_status_check = 0
+        check_every = 3  # 3 ハートビートに 1 回 status をチェック
+        heartbeats = 0
+
+        async for event in q.read_events(tid):
+            if event.get("type") == "_heartbeat":
+                # XREAD タイムアウト。タスクが死んでないか念のためチェック
+                heartbeats += 1
+                if heartbeats - last_status_check >= check_every:
+                    last_status_check = heartbeats
+                    fresh = db.get_task(tid)
+                    if fresh and fresh.get("status") in ("completed", "failed", "cancelled"):
+                        # 何らかの理由で done イベントが流れていない → 強制終了
+                        yield _format_sse({"type": "done", "status": fresh["status"]})
+                        return
+                # ハートビートを SSE 側にも流して TCP keepalive 代わりに
+                yield ": keepalive\n\n"
+                continue
+            yield _format_sse(event)
+            if event.get("type") == "done":
+                return
+
+    return StreamingResponse(emit(), media_type="text/event-stream", headers=_sse_headers())
+
+
+# ─── Failures (長期記憶) の閲覧・クリア ───
+
+@app.get("/api/failures")
+async def get_failures(limit: int = 50) -> dict:
+    """蓄積された違反例を新しい順に返す。UI の「失敗履歴」パネル用。"""
+    return {
+        "count": db.count_failures(),
+        "items": db.list_failures(limit=max(1, min(limit, 500))),
+    }
+
+
+@app.delete("/api/failures")
+async def clear_failures_endpoint() -> dict:
+    n = db.clear_failures()
+    return {"cleared": n}
+
+
+@app.post("/api/tasks/{tid}/cancel")
+async def cancel_task_endpoint(tid: str) -> dict:
+    task = db.get_task(tid)
+    if not task:
+        raise HTTPException(status_code=404, detail="task not found")
+    if task.get("status") != "running":
+        return {"task_id": tid, "status": task.get("status"), "cancelled": False}
+    cancelled = await tasks.cancel_task(tid)
+    return {"task_id": tid, "cancelled": cancelled}

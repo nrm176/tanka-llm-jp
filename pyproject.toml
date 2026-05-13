@@ -1,0 +1,9 @@
+[project]
+name = "llm"
+version = "0.1.0"
+description = "Local LM Studio chat client"
+requires-python = ">=3.12"
+dependencies = [
+    "openai>=1.0",
+    "pykakasi>=2.3.0",
+]

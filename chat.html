@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>llm-jp-4-8b-thinking — Chat</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
+                   "Hiragino Sans", "Noto Sans JP", sans-serif;
+      background: #ffffff;
+      color: #1f1f1f;
+      font-size: 15px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    #root { height: 100%; }
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      max-width: 780px;
+      margin: 0 auto;
+    }
+    header {
+      padding: 14px 20px;
+      border-bottom: 1px solid #ececec;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      color: #6b6b6b;
+    }
+    header .title { font-weight: 600; color: #1f1f1f; }
+    header .status { display: flex; align-items: center; gap: 6px; }
+    header .status .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #d0d0d0;
+    }
+    header .status.ok .dot { background: #2ea043; }
+    header .status.err .dot { background: #d1383d; }
+    main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 28px 20px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .msg { display: flex; flex-direction: column; }
+    .msg-user {
+      align-self: flex-end;
+      max-width: 78%;
+      background: #f3f3f3;
+      border-radius: 18px;
+      padding: 11px 16px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .msg-assistant { align-self: stretch; }
+    .msg-assistant .content {
+      word-wrap: break-word;
+    }
+    .msg-assistant .content > *:first-child { margin-top: 0; }
+    .msg-assistant .content > *:last-child { margin-bottom: 0; }
+    .msg-assistant .content p { margin: 0.6em 0; }
+    .msg-assistant .content ul,
+    .msg-assistant .content ol { margin: 0.6em 0; padding-left: 1.5em; }
+    .msg-assistant .content code {
+      background: #f5f5f5; padding: 1px 5px; border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em;
+    }
+    .msg-assistant .content pre {
+      background: #1e1e1e; color: #f3f3f3; padding: 12px 14px;
+      border-radius: 8px; overflow-x: auto; margin: 0.6em 0;
+    }
+    .msg-assistant .content pre code { background: transparent; padding: 0; color: inherit; }
+    .msg-assistant .content table {
+      border-collapse: collapse; margin: 0.6em 0; width: 100%;
+    }
+    .msg-assistant .content th,
+    .msg-assistant .content td {
+      border: 1px solid #e0e0e0; padding: 6px 10px; text-align: left;
+    }
+    .msg-assistant .content th { background: #fafafa; }
+    .msg-assistant .content blockquote {
+      border-left: 3px solid #d0d0d0; padding-left: 12px; color: #555; margin: 0.6em 0;
+    }
+    .thinking {
+      margin-bottom: 10px;
+      background: #fafafa;
+      border: 1px solid #ececec;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 13px;
+      color: #6b6b6b;
+    }
+    .thinking summary {
+      cursor: pointer;
+      user-select: none;
+      font-weight: 500;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .thinking summary::-webkit-details-marker { display: none; }
+    .thinking summary::before {
+      content: "▸";
+      font-size: 10px;
+      transition: transform 0.15s;
+    }
+    .thinking[open] summary::before { transform: rotate(90deg); }
+    .thinking .body {
+      margin-top: 8px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: inherit;
+      font-size: 13px;
+      color: #555;
+    }
+    .thinking.live summary { color: #1f1f1f; }
+    .thinking.live summary::after {
+      content: "";
+      display: inline-block;
+      width: 8px; height: 8px;
+      border: 1.5px solid #888;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-left: 4px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .cursor {
+      display: inline-block;
+      width: 8px;
+      height: 1em;
+      vertical-align: text-bottom;
+      background: currentColor;
+      animation: blink 1.05s steps(2) infinite;
+      margin-left: 1px;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+    .empty {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #9b9b9b;
+      font-size: 14px;
+      text-align: center;
+      padding: 20px;
+    }
+    .error {
+      background: #fff5f5;
+      border: 1px solid #f1c0c0;
+      color: #b32d2d;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    footer {
+      padding: 12px 20px 20px;
+      border-top: 1px solid #ececec;
+      background: #fff;
+    }
+    .input-row {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+      background: #fafafa;
+      border: 1px solid #e0e0e0;
+      border-radius: 18px;
+      padding: 8px 8px 8px 14px;
+      transition: border-color 0.15s;
+    }
+    .input-row:focus-within { border-color: #999; background: #fff; }
+    textarea {
+      flex: 1;
+      border: none;
+      background: transparent;
+      font-family: inherit;
+      font-size: 15px;
+      resize: none;
+      outline: none;
+      max-height: 220px;
+      padding: 6px 0;
+      line-height: 1.5;
+    }
+    textarea:disabled { color: #999; }
+    .send-btn {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      border: none;
+      background: #1f1f1f;
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    .send-btn:hover:not(:disabled) { background: #000; }
+    .send-btn:disabled { background: #d0d0d0; cursor: not-allowed; }
+    .send-btn svg { width: 18px; height: 18px; }
+    .stop-btn { background: #b32d2d; }
+    .stop-btn:hover:not(:disabled) { background: #8a1f1f; }
+    .footer-hint {
+      text-align: center;
+      font-size: 11px;
+      color: #9b9b9b;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="env,react">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    const ENDPOINT = "http://localhost:1234/v1/chat/completions";
+    const MODEL = "llm-jp-4-8b-thinking";
+    const SYSTEM_PROMPT =
+      "あなたは知的で丁寧な日本語アシスタントです。状況に応じて適切な役割を担ってください。";
+
+    const HARMONY_FINAL_MARKER = "<|channel|>final<|message|>";
+    const SPECIAL_TOKEN_RE = /<\|[^|]+\|>/g;
+
+    function splitHarmony(raw) {
+      const idx = raw.indexOf(HARMONY_FINAL_MARKER);
+      if (idx === -1) {
+        return {
+          thinking: raw.replace(SPECIAL_TOKEN_RE, "").trim(),
+          answer: "",
+          markerSeen: false,
+        };
+      }
+      return {
+        thinking: raw.slice(0, idx).replace(SPECIAL_TOKEN_RE, "").trim(),
+        answer: raw.slice(idx + HARMONY_FINAL_MARKER.length).replace(SPECIAL_TOKEN_RE, "").trim(),
+        markerSeen: true,
+      };
+    }
+
+    async function* streamChat(messages, signal) {
+      const res = await fetch(ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: MODEL,
+          messages,
+          temperature: 0.7,
+          stream: true,
+        }),
+        signal,
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split("\n\n");
+        buffer = events.pop() ?? "";
+        for (const evt of events) {
+          for (const line of evt.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const data = line.slice(5).trim();
+            if (data === "[DONE]") return;
+            try {
+              const json = JSON.parse(data);
+              const delta = json?.choices?.[0]?.delta?.content;
+              if (delta) yield delta;
+            } catch (_) {}
+          }
+        }
+      }
+    }
+
+    marked.setOptions({ breaks: true, gfm: true });
+
+    function ThinkingBlock({ text, live }) {
+      if (!text && !live) return null;
+      return (
+        <details className={"thinking" + (live ? " live" : "")} open={live}>
+          <summary>{live ? "考えています" : "思考プロセス"}</summary>
+          <div className="body">{text || "..."}</div>
+        </details>
+      );
+    }
+
+    function AssistantMessage({ thinking, answer, streaming }) {
+      const html = answer ? marked.parse(answer) : "";
+      return (
+        <div className="msg msg-assistant">
+          <ThinkingBlock text={thinking} live={streaming && !answer} />
+          {answer && (
+            <div className="content" dangerouslySetInnerHTML={{ __html: html }} />
+          )}
+          {streaming && answer && <span className="cursor" />}
+        </div>
+      );
+    }
+
+    function App() {
+      const [history, setHistory] = useState([]); // {role, content, thinking?}[]
+      const [input, setInput] = useState("");
+      const [streamingRaw, setStreamingRaw] = useState("");
+      const [streaming, setStreaming] = useState(false);
+      const [error, setError] = useState(null);
+      const [serverOk, setServerOk] = useState(null); // null | true | false
+      const abortRef = useRef(null);
+      const scrollRef = useRef(null);
+      const textareaRef = useRef(null);
+
+      // Auto-resize textarea
+      useEffect(() => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        ta.style.height = "auto";
+        ta.style.height = Math.min(ta.scrollHeight, 220) + "px";
+      }, [input]);
+
+      // Auto-scroll to bottom on new content
+      useEffect(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        el.scrollTop = el.scrollHeight;
+      }, [history, streamingRaw]);
+
+      // Health check on load
+      useEffect(() => {
+        fetch("http://localhost:1234/v1/models")
+          .then((r) => setServerOk(r.ok))
+          .catch(() => setServerOk(false));
+      }, []);
+
+      const send = useCallback(async () => {
+        const text = input.trim();
+        if (!text || streaming) return;
+        setError(null);
+        setInput("");
+        const userMsg = { role: "user", content: text };
+        const newHistory = [...history, userMsg];
+        setHistory(newHistory);
+
+        const apiMessages = [
+          { role: "system", content: SYSTEM_PROMPT },
+          ...newHistory.map(({ role, content }) => ({ role, content })),
+        ];
+
+        setStreaming(true);
+        setStreamingRaw("");
+        abortRef.current = new AbortController();
+        let raw = "";
+        try {
+          for await (const delta of streamChat(apiMessages, abortRef.current.signal)) {
+            raw += delta;
+            setStreamingRaw(raw);
+          }
+          const { thinking, answer, markerSeen } = splitHarmony(raw);
+          const finalAnswer = markerSeen ? answer : raw.replace(SPECIAL_TOKEN_RE, "").trim();
+          const finalThinking = markerSeen ? thinking : null;
+          setHistory((h) => [
+            ...h,
+            { role: "assistant", content: finalAnswer, thinking: finalThinking },
+          ]);
+        } catch (e) {
+          if (e.name === "AbortError") {
+            // user stopped — keep what we have so far as a final message
+            const { thinking, answer, markerSeen } = splitHarmony(raw);
+            const finalAnswer = markerSeen ? answer : raw.replace(SPECIAL_TOKEN_RE, "").trim();
+            const finalThinking = markerSeen ? thinking : null;
+            if (finalAnswer || finalThinking) {
+              setHistory((h) => [
+                ...h,
+                { role: "assistant", content: finalAnswer + " …(中断)", thinking: finalThinking },
+              ]);
+            }
+          } else {
+            setError(e.message || String(e));
+          }
+        } finally {
+          setStreaming(false);
+          setStreamingRaw("");
+          abortRef.current = null;
+        }
+      }, [input, history, streaming]);
+
+      const stop = () => abortRef.current?.abort();
+
+      const onKeyDown = (e) => {
+        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+          e.preventDefault();
+          send();
+        }
+      };
+
+      const liveSplit = streaming ? splitHarmony(streamingRaw) : null;
+
+      return (
+        <div className="app">
+          <header>
+            <span className="title">{MODEL}</span>
+            <span className={"status " + (serverOk === true ? "ok" : serverOk === false ? "err" : "")}>
+              <span className="dot" />
+              {serverOk === true ? "LM Studio 接続中" : serverOk === false ? "LM Studio 未接続" : "確認中..."}
+            </span>
+          </header>
+
+          <main ref={scrollRef}>
+            {history.length === 0 && !streaming && (
+              <div className="empty">
+                メッセージを入力してください。<br />
+                Enter で送信 / Shift+Enter で改行
+              </div>
+            )}
+
+            {history.map((m, i) =>
+              m.role === "user" ? (
+                <div key={i} className="msg msg-user">{m.content}</div>
+              ) : (
+                <AssistantMessage
+                  key={i}
+                  thinking={m.thinking}
+                  answer={m.content}
+                  streaming={false}
+                />
+              )
+            )}
+
+            {streaming && (
+              <AssistantMessage
+                thinking={liveSplit.thinking}
+                answer={liveSplit.answer}
+                streaming={true}
+              />
+            )}
+
+            {error && <div className="error">エラー: {error}</div>}
+          </main>
+
+          <footer>
+            <div className="input-row">
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={onKeyDown}
+                placeholder="メッセージを入力..."
+                disabled={streaming}
+              />
+              {streaming ? (
+                <button className="send-btn stop-btn" onClick={stop} title="中断">
+                  <svg viewBox="0 0 16 16" fill="currentColor"><rect x="4" y="4" width="8" height="8" rx="1"/></svg>
+                </button>
+              ) : (
+                <button
+                  className="send-btn"
+                  onClick={send}
+                  disabled={!input.trim()}
+                  title="送信 (Enter)"
+                >
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="8" y1="13" x2="8" y2="3" />
+                    <polyline points="3,8 8,3 13,8" />
+                  </svg>
+                </button>
+              )}
+            </div>
+            <div className="footer-hint">
+              ローカルの LM Studio (localhost:1234) に接続しています。
+            </div>
+          </footer>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
