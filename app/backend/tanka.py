@@ -265,10 +265,26 @@ def _format_failure_history_block(history: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 # Plateau 判定の窓: 直近 N attempt で best score が改善しなければ打ち切る
-PLATEAU_WINDOW = 3
+PLATEAU_WINDOW = _env_int("TANKA_PLATEAU_WINDOW", 3)
 # 暴走防止の安全上限 (滅多に踏まない想定; LM Studio のコンテキスト枯渇対策)
-HARD_CAP = 50
+HARD_CAP = _env_int("TANKA_HARD_CAP", 50)
+# Phase 1 B4: Compose 直後の自己点検フェーズを有効にするか (Phase 2 でアブレーション)
+SELF_CRITIQUE_ENABLED = _env_bool("TANKA_SELF_CRITIQUE", True)
 
 
 async def generate_tanka_pipeline(theme: str, max_refines: int | None = None) -> AsyncIterator[dict[str, Any]]:
@@ -363,6 +379,36 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None) ->
     yield {"type": "phase_end", "phase": "compose", "text": composition}
 
     refine_history = compose_messages + [{"role": "assistant", "content": composition}]
+
+    # ── Phase 1 B4: 自己点検フェーズ ──
+    # Compose 直後に LLM 自身に「初稿に問題ないか確認し、必要なら修正版を出せ」と促す。
+    # validator が動く前の自己フィルタ。8B モデルでも明らかな違反 (kigo 重複、季違い等)
+    # を 1 ターンで気づける場合があり、後段の refine 回数を減らせる。
+    # Phase 2 のアブレーション実験のため SELF_CRITIQUE_ENABLED でオン/オフ可能。
+    if SELF_CRITIQUE_ENABLED:
+        yield {"type": "phase_start", "phase": "self_critique"}
+        self_critique_messages = refine_history + [{"role": "user", "content": (
+            "上記の短歌について自己点検してください。次の観点を確認し、問題があれば修正版を JSON で、"
+            "問題なければ同じ JSON を JSON 形式でそのまま出力してください (前後の説明は付けない)。\n\n"
+            "1. kigo フィールドで宣言した語が、本文 (lines.body) のどこかにちょうど 1 回だけ出現しているか\n"
+            "2. 宣言外の他の季の季語が混在していないか\n"
+            "3. 各句の拍数が 5-7-5-7-7 になっているか (拗音は 1 拍、促音/撥音/長音は各 1 拍)\n"
+            "4. 構想で決めた kigo と season を維持しているか\n"
+            "5. 切れ字や体言止めで余韻が生まれているか"
+        )}]
+        composition_raw = ""
+        async for delta in stream_completion(self_critique_messages):
+            composition_raw += delta
+            yield {"type": "chunk", "phase": "self_critique", "text": delta}
+        _, composition_revised = split_harmony(composition_raw)
+        yield {"type": "phase_end", "phase": "self_critique", "text": composition_revised}
+
+        # 自己修正後の出力を以降の基準にする
+        composition = composition_revised
+        refine_history.append({"role": "user", "content": (
+            "上記の短歌について自己点検し、必要なら修正版を出してください。"
+        )})
+        refine_history.append({"role": "assistant", "content": composition})
 
     # ── Step 3: Validate (& Refine loop) ──
     # 改善が見られる限り refine し続ける。max_refines=None なら HARD_CAP まで。

@@ -61,6 +61,7 @@ function PhaseBlock({ phase, attempt, raw, complete, streaming }) {
   const headerLabel =
     phase === 'plan' ? '構想を立てる'
       : phase === 'compose' ? '作歌'
+      : phase === 'self_critique' ? '自己点検'
       : phase === 'refine' ? `再詠 (試行 ${attempt})`
       : phase
   return (

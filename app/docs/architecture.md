@@ -187,10 +187,16 @@ sequenceDiagram
     Pipe->>DB: recent_failures(season=Y, limit=3)
     DB-->>Pipe: [失敗 1, 失敗 2, ...]
 
-    Note over Pipe: Step 2-4: Compose → Validate → Refine ループ
+    Note over Pipe: Step 2: Compose (初稿)
+    Pipe->>L: Compose (system + few-shot + plan +<br/>plan_constraint + long-term failures)
+    L-->>Pipe: JSON 初稿
+
+    Note over Pipe: Step 3: Self-critique (Phase 1 B4, gated by SELF_CRITIQUE_ENABLED)
+    Pipe->>L: "上記の短歌を自己点検し、必要なら修正版を JSON で"
+    L-->>Pipe: JSON (自己修正版 or 同一)
+
+    Note over Pipe: Step 4-5: Validate → Refine ループ
     loop until pass or plateau or HARD_CAP
-        Pipe->>L: Compose (system + few-shot + plan +<br/>plan_constraint + long-term failures +<br/>short-term failure_history)
-        L-->>Pipe: JSON
         Pipe->>V: parse_tanka_json
         Pipe->>V: evaluate(expected_season=Y, expected_kigo=X)
         V-->>Pipe: score, violations
@@ -201,7 +207,8 @@ sequenceDiagram
         else 直近 N 試行で改善なし
             Note over Pipe: break (plateau, best 案を採用)
         else
-            Pipe->>L: Refine (critique 注入)
+            Pipe->>L: Refine (critique 注入, short-term failure_history も)
+            L-->>Pipe: JSON 再稿
         end
     end
 
@@ -528,6 +535,7 @@ docker compose down -v          # ボリュームも削除 (DB データが消�
 
 ### 環境変数 (backend)
 
+#### 接続系
 | 変数 | デフォルト | 用途 |
 |---|---|---|
 | `LM_STUDIO_URL`   | `http://host.docker.internal:1234/v1` | LM Studio のエンドポイント |
@@ -535,6 +543,31 @@ docker compose down -v          # ボリュームも削除 (DB データが消�
 | `MONGO_URL`       | `mongodb://mongo:27017`                | MongoDB 接続文字列 |
 | `MONGO_DB`        | `tanka_chat`                           | DB 名 |
 | `REDIS_URL`       | `redis://redis:6379/0`                 | Redis 接続文字列 |
+
+#### Pipeline 制御 (Phase 1 A5 で追加)
+| 変数 | デフォルト | 用途 |
+|---|---|---|
+| `TANKA_SELF_CRITIQUE` | `1` (true) | Compose 後の自己点検フェーズ。Phase 2 A/B 実験で off にして効果測定 |
+| `TANKA_PLATEAU_WINDOW` | `3` | plateau 検知の窓幅 |
+| `TANKA_HARD_CAP` | `50` | refine 回数の安全上限 |
+| `TANKA_PASS_THRESHOLD` | `80` | 合格スコア閾値 |
+
+#### Validator ルール重み (Phase 1 A5 で追加; Phase 2 のアブレーション用)
+| 変数 | デフォルト | 対象ルール |
+|---|---|---|
+| `TANKA_W_MORA_COUNT` | `10` | 拍数 ±2 以上違反 (critical) |
+| `TANKA_W_MORA_OFF_BY_ONE` | `3` | 字余り/字足らず ±1 (minor) — Phase 1 B5b |
+| `TANKA_W_MORA_DISPUTED` | `3` | pykakasi と model 読みの食い違い |
+| `TANKA_W_KIGO_PRESENT` | `25` | 宣言季語が本文に出ない (critical) |
+| `TANKA_W_KIGO_UNIQUE` | `15` | 季語の重複使用 (major) |
+| `TANKA_W_KIGO_IN_DICTIONARY` | `5` | 辞書にない季語 (minor) |
+| `TANKA_W_SEASON_CONSISTENT` | `20` | 宣言季と辞書記載季の不一致 (major) |
+| `TANKA_W_SEASON_MATCHES_PLAN` | `30` | Plan-output 季節不一致 (critical) |
+| `TANKA_W_KIGO_MATCHES_PLAN` | `20` | Plan-output 季語不一致 (major) |
+| `TANKA_W_NO_OTHER_KIGO_CROSS` | `15` | 季違いの混入 (major) |
+| `TANKA_W_NO_OTHER_KIGO_SAME` | `5` | 同季の他季語混入 (minor) |
+| `TANKA_W_REPEATED_WORD` | `3` | 表現の重複 |
+| `TANKA_W_KIREJI_ABSENT` | `3` | 句切れ・体言止め両方なし (minor) — Phase 1 B5a+B5c |
 
 ### ヘルスチェック
 

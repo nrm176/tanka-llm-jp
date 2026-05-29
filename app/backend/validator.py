@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -29,7 +30,45 @@ import tanka  # 既存のモーラ計算等を利用
 
 log = logging.getLogger("validator")
 
-PASS_THRESHOLD = 80
+
+# ─── 設定 (環境変数オーバーライド可能) ───
+# Phase 2 のアブレーション実験で重みやしきい値を変えて A/B 比較するために、
+# ハードコードではなく一箇所に集約し、環境変数で上書きできる形にしてある。
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+PASS_THRESHOLD = _env_int("TANKA_PASS_THRESHOLD", 80)
+
+# ルール重み (減点)。値が大きいほど refine 強制力が強い。
+RULE_WEIGHTS: dict[str, int] = {
+    # critical
+    "mora_count":            _env_int("TANKA_W_MORA_COUNT", 10),
+    "kigo_present":          _env_int("TANKA_W_KIGO_PRESENT", 25),
+    "season_matches_plan":   _env_int("TANKA_W_SEASON_MATCHES_PLAN", 30),
+    # major
+    "kigo_unique":           _env_int("TANKA_W_KIGO_UNIQUE", 15),
+    "season_consistent":     _env_int("TANKA_W_SEASON_CONSISTENT", 20),
+    "kigo_matches_plan":     _env_int("TANKA_W_KIGO_MATCHES_PLAN", 20),
+    "no_other_kigo_cross":   _env_int("TANKA_W_NO_OTHER_KIGO_CROSS", 15),
+    # minor
+    "no_other_kigo_same":    _env_int("TANKA_W_NO_OTHER_KIGO_SAME", 5),
+    "kigo_in_dictionary":    _env_int("TANKA_W_KIGO_IN_DICTIONARY", 5),
+    "repeated_word":         _env_int("TANKA_W_REPEATED_WORD", 3),
+    "mora_count_disputed":   _env_int("TANKA_W_MORA_DISPUTED", 3),
+    # 新規 (Phase 1)
+    "mora_count_off_by_one": _env_int("TANKA_W_MORA_OFF_BY_ONE", 3),   # B5b: 字余り/字足らず
+    "kireji_absent":         _env_int("TANKA_W_KIREJI_ABSENT", 3),     # B5a+B5c: 句切れ・体言止め
+}
+
+
+def _w(rule: str) -> int:
+    """ルール重みを引く (未登録なら 5)。"""
+    return RULE_WEIGHTS.get(rule, 5)
 
 
 # ─── Pydantic スキーマ ───
@@ -134,10 +173,10 @@ def _violation(rule: str, severity: Severity, weight: int, message: str) -> Viol
 def _rule_mora_count(t: Tanka) -> list[Violation]:
     """各句の拍数 (5-7-5-7-7) を漢字本体から pykakasi で独立計算したもので検証する。
 
-    pykakasi は現代漢字辞書ベースなので、古典読みや一字多音 (例: 日=ひ/にち) で
-    モデル提供の読みと食い違うことがある。そこで:
-    - pykakasi == model 両方とも違う → critical (-10): 本物の拍数違反 (gaming も含む)
-    - pykakasi だけ違って model 提供読みは正しい → minor (-3): 古典読み等の疑い
+    3 段階の判定 (Phase 1 B5b):
+    - pykakasi だけ違って model 提供読みは正しい  → mora_count_disputed (-3 minor) 古典読み疑い
+    - 1 拍だけずれている (字余り/字足らず)          → mora_count_off_by_one (-3 minor) 許容範囲
+    - 2 拍以上違う                                 → mora_count (-10 critical) 本物の違反
     """
     expected = [5, 7, 5, 7, 7]
     out: list[Violation] = []
@@ -147,20 +186,32 @@ def _rule_mora_count(t: Tanka) -> list[Violation]:
         if actual == expected[i]:
             continue
         model_count = tanka.count_moras(line.reading)
+
         if model_count == expected[i]:
             # モデル提供の読みは正しい拍数。pykakasi の辞書違いの可能性が高い。
             out.append(_violation(
-                "mora_count_disputed", "minor", 3,
+                "mora_count_disputed", "minor", _w("mora_count_disputed"),
                 f"{i+1}句目「{line.body}」は pykakasi 計算で {actual} 拍 ({canonical}) だが、"
                 f"モデル提供の読み「{line.reading}」では {expected[i]} 拍。"
                 f"古典読み等で判定が分かれた可能性があります。読みを再確認してください。"
+            ))
+            continue
+
+        diff = abs(actual - expected[i])
+        if diff == 1:
+            # 字余り/字足らず。古典短歌でも許容される技法。
+            label = "字余り" if actual > expected[i] else "字足らず"
+            out.append(_violation(
+                "mora_count_off_by_one", "minor", _w("mora_count_off_by_one"),
+                f"{i+1}句目「{line.body}」は {actual} 拍 ({canonical})、{expected[i]} 拍が標準。"
+                f"{label} は意図的な技法として許容されるが、特に意味がなければ整えてください。"
             ))
         else:
             note = ""
             if model_count != actual:
                 note = f"（モデル提供読み「{line.reading}」は {model_count} 拍と主張）"
             out.append(_violation(
-                "mora_count", "critical", 10,
+                "mora_count", "critical", _w("mora_count"),
                 f"{i+1}句目「{line.body}」は実際は {actual} 拍 (正規読み: {canonical})。"
                 f"{expected[i]} 拍に整えてください。{note}"
             ))
@@ -172,7 +223,7 @@ def _rule_kigo_present(t: Tanka) -> list[Violation]:
     body_text = "".join(line.body for line in t.lines)
     if t.kigo not in body_text:
         return [_violation(
-            "kigo_present", "critical", 25,
+            "kigo_present", "critical", _w("kigo_present"),
             f"宣言された季語「{t.kigo}」が短歌本文に現れません。本文か kigo フィールドを修正してください。"
         )]
     return []
@@ -184,7 +235,7 @@ def _rule_kigo_unique(t: Tanka) -> list[Violation]:
     n = body_text.count(t.kigo)
     if n > 1:
         return [_violation(
-            "kigo_unique", "major", 15,
+            "kigo_unique", "major", _w("kigo_unique"),
             f"季語「{t.kigo}」が短歌内で {n} 回現れています。"
             f"一句一季語の原則に従い、{n - 1} 箇所を別の語に置換してください。"
         )]
@@ -196,7 +247,7 @@ def _rule_kigo_in_dictionary(t: Tanka) -> list[Violation]:
     辞書は限定的なので不在 = 必ずしも誤りではないが、レビューを促す軽い警告にする。"""
     if t.kigo not in KIGO_DICT:
         return [_violation(
-            "kigo_in_dictionary", "minor", 5,
+            "kigo_in_dictionary", "minor", _w("kigo_in_dictionary"),
             f"季語「{t.kigo}」は手元の歳時記辞書に登録されていません。"
             f"より一般的な季語に置き換えるか、宣言が正しいことを再確認してください。"
         )]
@@ -210,7 +261,7 @@ def _rule_season_consistent(t: Tanka) -> list[Violation]:
     expected_season = KIGO_DICT[t.kigo]
     if t.season != expected_season:
         return [_violation(
-            "season_consistent", "major", 20,
+            "season_consistent", "major", _w("season_consistent"),
             f"宣言された季節「{t.season}」と季語「{t.kigo}」(辞書記載: {expected_season}) が一致しません。"
         )]
     return []
@@ -235,13 +286,13 @@ def _rule_no_other_kigo(t: Tanka) -> list[Violation]:
     for kigo, season in seen_other.items():
         if season != t.season:
             out.append(_violation(
-                "no_other_kigo", "major", 15,
+                "no_other_kigo_cross", "major", _w("no_other_kigo_cross"),
                 f"宣言外の季語「{kigo}」({season}) が本文に含まれており、"
                 f"宣言季「{t.season}」と異なる季違いです。"
             ))
         else:
             out.append(_violation(
-                "no_other_kigo", "minor", 5,
+                "no_other_kigo_same", "minor", _w("no_other_kigo_same"),
                 f"宣言外の同季季語「{kigo}」({season}) が本文に含まれています。"
                 f"季語が複数あると焦点がぼやけるため、いずれかに整理することを推奨します。"
             ))
@@ -266,11 +317,72 @@ def _rule_repeated_word(t: Tanka) -> list[Violation]:
         for s, c in substr_counter.items():
             if c >= 2 and not _is_trivial_substring(s):
                 out.append(_violation(
-                    "repeated_word", "minor", 3,
+                    "repeated_word", "minor", _w("repeated_word"),
                     f"「{s}」が複数の句に登場しています。表現の重複を避けると引き締まります。"
                 ))
                 return out  # 一件報告すれば十分
     return out
+
+
+# ─── Phase 1 B5a + B5c: 句切れ / 体言止め ───
+# 「句切れ」は短歌の余韻を生む作法。少なくとも一つあるのが定型。
+# 結句が体言止めの場合は、それ自体が独立した収束マーカーなので OK 扱いにする。
+
+# 切れ字や終止形助動詞の末尾パターン (簡易判定; 形態素解析を使わずに到達できる範囲)
+_KIREJI_TAIL_PATTERNS = (
+    "や", "かな", "けり", "なり", "たり", "ぞ", "らむ", "けむ",
+    "らし", "まじ", "まし", "む", "ぬ", "ず", "つ", "ね", "よ", "を",
+    "ゆ", "る", "き",
+)
+
+# 結句が体言で終わる場合の典型末尾 (ひらがな + 代表的漢字)
+_TAIGEN_TAIL_HIRAGANA = (
+    "もの", "こと", "ひと", "とき", "ところ", "ゆめ", "おもひ", "こころ",
+    "あめ", "かぜ", "つき", "はな", "ゆき", "ほし", "うた", "こゑ",
+    "おと", "いろ", "みち", "やま", "うみ", "そら", "くも", "ひ", "よ",
+    "かげ", "ねこ", "とり",
+)
+_TAIGEN_TAIL_KANJI = (
+    "月", "花", "風", "雨", "雪", "星", "声", "歌", "音", "色", "道",
+    "山", "海", "空", "雲", "影", "鳥", "夢", "人", "心", "時", "里",
+    "野", "光", "影",
+)
+
+
+def _ends_with_any(text: str, patterns: tuple[str, ...]) -> bool:
+    return any(text.endswith(p) for p in patterns)
+
+
+def _rule_kireji_or_taigendome(t: Tanka) -> list[Violation]:
+    """1-4 句のどこかに句切れがあるか、または 5 句目が体言止めで終わっているか。
+    どちらも検出できなければ minor 警告。
+
+    形態素解析を持たないので末尾文字列の近似検出。8B モデル特有の "全部が流れる
+    散文っぽい短歌" を抑制するための軽い注意喚起ルール。"""
+    # 1-4 句に切れ字／終止形候補があるか (kana 読み末尾で判定)
+    has_mid_kireji = any(
+        _ends_with_any(line.reading.strip(), _KIREJI_TAIL_PATTERNS)
+        for line in t.lines[:-1]
+    )
+    if has_mid_kireji:
+        return []
+
+    # 結句が体言止めか
+    last = t.lines[-1]
+    body_end = last.body.strip()
+    reading_end = last.reading.strip()
+    has_taigen_dome = (
+        _ends_with_any(body_end, _TAIGEN_TAIL_KANJI) or
+        _ends_with_any(reading_end, _TAIGEN_TAIL_HIRAGANA)
+    )
+    if has_taigen_dome:
+        return []
+
+    return [_violation(
+        "kireji_absent", "minor", _w("kireji_absent"),
+        "句切れも体言止めも検出できません。切れ字 (や / かな / けり等) を入れるか、"
+        "結句を体言で締めると、短歌に区切れと余韻が生まれます。"
+    )]
 
 
 _TRIVIAL = re.compile(r"^[のはがをにでとへもやかな、。]+$")
@@ -289,6 +401,7 @@ RULES: list[RuleFunc] = [
     _rule_season_consistent,
     _rule_no_other_kigo,
     _rule_repeated_word,
+    _rule_kireji_or_taigendome,    # NEW: Phase 1 B5a + B5c
 ]
 
 
@@ -311,13 +424,13 @@ def evaluate(
 
     if expected_season and t.season != expected_season:
         violations.append(_violation(
-            "season_matches_plan", "critical", 30,
+            "season_matches_plan", "critical", _w("season_matches_plan"),
             f"構想で決めた季節「{expected_season}」と出力の season「{t.season}」が一致しません。"
             f"構想を勝手に書き換えず、季節「{expected_season}」の歌にしてください。"
         ))
     if expected_kigo and t.kigo != expected_kigo:
         violations.append(_violation(
-            "kigo_matches_plan", "major", 20,
+            "kigo_matches_plan", "major", _w("kigo_matches_plan"),
             f"構想で決めた季語「{expected_kigo}」と出力の kigo「{t.kigo}」が一致しません。"
             f"構想で選んだ季語をそのまま使ってください。"
         ))
@@ -412,15 +525,18 @@ def format_schema_critique(error_msg: str) -> str:
 # ルール名 → 「次回に活かすべき短い教訓」。anti-example の本文で使う。
 LESSONS: dict[str, str] = {
     "kigo_unique": "宣言した季語は本文中ちょうど 1 回だけ出現させる (再利用禁止)",
-    "no_other_kigo": "宣言した季と異なる季の季語を本文に含めない (季違い回避)",
+    "no_other_kigo_cross": "宣言した季と異なる季の季語を本文に含めない (季違い回避)",
+    "no_other_kigo_same": "宣言外の季語も含めると焦点がぼやける。一首一季語に絞る",
     "kigo_present": "kigo フィールドで宣言した語を、必ず本文 lines のどこかに登場させる",
     "season_consistent": "宣言する季節は、選んだ季語の本来の季と一致させる",
     "season_matches_plan": "構想ステップで決めた季節を勝手に変更しない",
     "kigo_matches_plan": "構想ステップで決めた季語をそのまま使う",
     "kigo_in_dictionary": "なるべく一般的に通用する季語を選ぶ",
     "mora_count": "拍数 5-7-5-7-7 を厳守する。漢字の現代読みでも数えられるようにする",
+    "mora_count_off_by_one": "字余り・字足らずは ±1 まで許容されるが、特に意図がなければ整える",
     "mora_count_disputed": "古典読みに頼る句では、現代読みでも拍数が崩れないよう調整するか、より平易な表記にする",
     "repeated_word": "目立つ語の重複を避け、表現を引き締める",
+    "kireji_absent": "切れ字 (や / かな / けり等) を入れるか、結句を体言で締めて余韻を作る",
     "schema_invalid": "JSON 形式厳守。前後に説明文を付けない",
 }
 
