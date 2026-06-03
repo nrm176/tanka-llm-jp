@@ -293,3 +293,119 @@ def fail_orphaned_tasks() -> int:
         }},
     )
     return res.modified_count
+
+
+# ─── メトリクス集計 (Phase 2) ───
+# 全セッションの tanka メッセージを走査し、品質指標を計算する。
+# 個人利用スケール (数百セッション) なので素朴な全件走査で十分。
+
+def compute_metrics(*, session_id: str | None = None) -> dict[str, Any]:
+    """tanka 生成の品質メトリクスを集計して返す。
+
+    session_id を指定するとそのセッションのみ。None なら全セッション横断。
+    評価ハーネス (eval.sh) は 1 セッション = 1 バリアントの実行に使い、
+    session_id を渡してそのバリアントの集計を取り出す。"""
+    query: dict[str, Any] = {}
+    if session_id:
+        try:
+            query["_id"] = ObjectId(session_id)
+        except Exception:
+            return _empty_metrics()
+
+    tanka_msgs: list[dict] = []
+    for sess in _sessions().find(query, projection={"messages": 1}):
+        for m in sess.get("messages", []):
+            if m.get("kind") == "tanka":
+                tanka_msgs.append(m)
+
+    return _aggregate_tanka_metrics(tanka_msgs)
+
+
+def _empty_metrics() -> dict[str, Any]:
+    return {
+        "total": 0,
+        "first_attempt_pass_rate": None,
+        "overall_pass_rate": None,
+        "avg_attempts": None,
+        "avg_final_score": None,
+        "plateau_rate": None,
+        "max_refines_rate": None,
+        "score_buckets": {},
+        "violation_frequency": {},
+        "violation_by_severity": {},
+    }
+
+
+def _aggregate_tanka_metrics(tanka_msgs: list[dict]) -> dict[str, Any]:
+    total = len(tanka_msgs)
+    if total == 0:
+        return _empty_metrics()
+
+    first_pass = 0          # attempt 0 で resolved
+    overall_pass = 0        # どこかの attempt で resolved (= final_score >= 80 相当)
+    attempts_sum = 0
+    score_sum = 0
+    score_count = 0
+    plateau_count = 0
+    max_refines_count = 0
+    score_buckets = {"0-39": 0, "40-59": 0, "60-79": 0, "80-89": 0, "90-100": 0}
+    violation_freq: dict[str, int] = {}
+    severity_freq: dict[str, int] = {"critical": 0, "major": 0, "minor": 0}
+
+    for m in tanka_msgs:
+        validations = m.get("validations") or []
+        attempts_sum += len(validations)
+
+        # first-attempt pass
+        if validations and validations[0].get("resolved"):
+            first_pass += 1
+        # overall pass: いずれかの attempt で resolved
+        if any(v.get("resolved") for v in validations):
+            overall_pass += 1
+
+        if m.get("plateau_reached"):
+            plateau_count += 1
+        if m.get("max_refines_reached"):
+            max_refines_count += 1
+
+        fs = m.get("final_score")
+        if isinstance(fs, int):
+            score_sum += fs
+            score_count += 1
+            if fs < 40:
+                score_buckets["0-39"] += 1
+            elif fs < 60:
+                score_buckets["40-59"] += 1
+            elif fs < 80:
+                score_buckets["60-79"] += 1
+            elif fs < 90:
+                score_buckets["80-89"] += 1
+            else:
+                score_buckets["90-100"] += 1
+
+        # 違反頻度: 全 attempt の全 violation を数える
+        for v in validations:
+            for viol in (v.get("violations") or []):
+                rule = viol.get("rule", "unknown")
+                violation_freq[rule] = violation_freq.get(rule, 0) + 1
+                sev = viol.get("severity", "minor")
+                if sev in severity_freq:
+                    severity_freq[sev] += 1
+
+    # 違反頻度を降順ソート (dict は挿入順を保持)
+    violation_freq_sorted = dict(
+        sorted(violation_freq.items(), key=lambda kv: -kv[1])
+    )
+
+    return {
+        "total": total,
+        "first_attempt_pass_rate": round(first_pass / total, 4),
+        "overall_pass_rate": round(overall_pass / total, 4),
+        "avg_attempts": round(attempts_sum / total, 3),
+        "avg_final_score": round(score_sum / score_count, 2) if score_count else None,
+        "plateau_rate": round(plateau_count / total, 4),
+        "max_refines_rate": round(max_refines_count / total, 4),
+        "score_buckets": score_buckets,
+        "violation_frequency": violation_freq_sorted,
+        "violation_by_severity": severity_freq,
+    }

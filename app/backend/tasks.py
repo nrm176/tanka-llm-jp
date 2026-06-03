@@ -197,6 +197,10 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
                 final_state["plateau_reached"] = True
                 final_state["best_score"] = event.get("best_score")
                 final_state["score_history"] = event.get("history", [])
+            elif etype == "llm_error":
+                # コンテキスト超過等で refine 続行不能 → best-so-far にフォールバック済み。
+                final_state["llm_error"] = event.get("message")
+                final_state["llm_error_recovered"] = event.get("recovered", False)
 
             # フロント送信時は内部用フィールドを落とす (raw_output は重い)
             if etype == "validation":

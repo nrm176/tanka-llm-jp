@@ -291,17 +291,32 @@ while True:
 ...
 ```
 
-### 重要: refine_history が単調増加する
+### 重要: context は attempt 数に依存しないよう bound されている
 
-毎 attempt で `refine_history` に 2 件 (user critique + assistant 出力) が append されます。
-attempt が増えれば LM Studio の context が圧迫されます。
+**【更新: Phase 2 で対策済み】** かつては `refine_history` を ever-growing にしていたため、
+attempt が増えると LM Studio の context を圧迫し、実際に Phase 2 の最初の eval 実行で
+`"Context size has been exceeded."` 失敗 (zero-output) を観測した。
 
-**安全網**:
+現在は **固定ベース + 直近 1 ラウンド方式** に変更済み:
 
-- Plateau 検知: 連続 3 試行で best_score が更新されなければ打ち切り → 通常は 3〜6 attempt で収束
-- HARD_CAP = 50: 暴走防止 (通常踏まない)
+```
+各 refine の messages = compose_messages (system + few-shot + 初回 user)   ← 固定
+                      + [{assistant: 直近の出力}, {user: 最新の critique}]  ← 1 ラウンドのみ
+```
 
-LM Studio のコンテキスト長を超えそうなお題が頻発する場合、refine_history の **冒頭 few-shot 例を間引く** などの圧縮が必要になります。
+validator の critique が問題点を毎回伝えるので、過去全 attempt を保持する必要はない。
+これで context は attempt 数に依存せずほぼ一定。self-critique フェーズも同じ方式。
+
+**多層の安全網**:
+
+- **bounded context**: 上記。根本対策
+- **エラーフォールバック**: refine 中に LLM がコンテキスト超過等で失敗したら、
+  `llm_error` イベントを出して **best-so-far を最終結果に採用** (zero-output を防ぐ)。
+  self-critique の失敗も非致命的 (初稿で続行)
+- **Plateau 検知**: 連続 3 試行で best_score が更新されなければ打ち切り → 通常 3〜6 attempt で収束
+- **HARD_CAP = 50**: 暴走防止 (通常踏まない)
+
+`_is_context_error()` がプロバイダ別のコンテキスト超過メッセージを広めに検出する。
 
 ---
 

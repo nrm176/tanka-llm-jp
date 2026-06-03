@@ -167,6 +167,13 @@ open http://localhost:5178                    # フロント
 - `start.sh` が起動前に lsof で 8001/5178 をチェックして fail-fast する
 - 過去に別プロジェクトのプロセスが占有 → docker compose の `frontend` start に失敗
 
+### 6.10 refine ループの context 超過 (Phase 2 で対策済み)
+- 旧実装は `refine_history` を ever-growing にしていたため、attempt が増えると
+  LM Studio の context を圧迫し `"Context size has been exceeded."` で zero-output 失敗
+- 対策: refine/self-critique は **固定ベース (compose_messages) + 直近 1 ラウンド** で組み立て、
+  context を attempt 数に依存させない。加えて LLM エラー時は best-so-far にフォールバック
+- 詳細は `app/docs/feedback-architecture.md §5`。**会話履歴を全 attempt 蓄積する実装に戻さないこと**
+
 ---
 
 ## 7. 設計上の重要な決定 (覆さないように)
@@ -188,8 +195,30 @@ open http://localhost:5178                    # フロント
 
 ## 8. テスト / 動作確認の流儀
 
-このリポジトリには自動テスト framework が入っていない。
-代わりに以下のパターンで確認する:
+### 自動テスト (Phase 2 で導入)
+
+```bash
+# validator の単体テスト (39 ケース、副作用ゼロなので LLM/DB 不要)
+cd app/backend && uv run pytest -q
+```
+
+`validator.py` は純関数集合なので pytest で網羅テスト済み。新ルール追加時は
+`tests/test_validator.py` にケースを足す。`test_every_rule_has_a_lesson` が
+「全ルールに LESSONS エントリがある」ことを保証しているので、ルール追加時は
+LESSONS への追加を忘れると test が落ちる (意図的な安全網)。
+
+### 品質測定 (Phase 2: 評価ハーネス)
+
+```bash
+cd app/backend/eval
+./eval.sh <variant>                      # 固定お題セットを生成 → results/ にメトリクス保存
+./compare.sh <before> <after>            # 2 バリアントの差分を 改善/劣化 で表示
+```
+
+パイプライン変更の効果は **必ず eval で数値確認** してから採用する (主観評価しない)。
+詳細は `app/backend/eval/README.md`。設定は `TANKA_*` 環境変数で切替 (アブレーション用)。
+
+### 手動確認
 
 ```bash
 # 1. backend の syntax + import チェック
@@ -199,7 +228,7 @@ cd app/backend && uv run python -c "import ast; ast.parse(open('main.py').read()
 cd app/frontend && npx --yes esbuild src/App.jsx --bundle --loader:.jsx=jsx --jsx=automatic \
   --platform=browser --external:react --external:react-dom --external:marked --outfile=/dev/null
 
-# 3. validator の単体動作 (新ルール追加時)
+# 3. validator の単体動作 (アドホック)
 cd app/backend && uv run python <<'PY'
 import validator
 t = validator.Tanka(kigo="花", season="春", lines=[...], image="", emotion="")

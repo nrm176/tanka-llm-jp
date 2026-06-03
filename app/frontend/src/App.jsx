@@ -202,6 +202,14 @@ function TankaMessage({ msg }) {
           {typeof msg.bestScore === 'number' && ` (最高 ${msg.bestScore}/100)`}。
         </div>
       )}
+      {msg.llmError && (
+        <div className="warn-banner">
+          ⚠ 生成中に LLM エラーが発生しました（コンテキスト超過の可能性）。
+          {msg.llmErrorRecovered
+            ? ' それまでで最も良かった案を最終結果として採用しています。'
+            : ' 有効な短歌を生成できませんでした。'}
+        </div>
+      )}
       {msg.complete && (
         <TankaCompleteBlock
           tanka={msg.complete.tanka}
@@ -482,6 +490,8 @@ function AppInner() {
             updateLastMessage((m) => ({ ...m, maxRefinesReached: true, bestScore: event.best_score }))
           } else if (event.type === 'plateau_reached') {
             updateLastMessage((m) => ({ ...m, plateauReached: true, bestScore: event.best_score, scoreHistory: event.history }))
+          } else if (event.type === 'llm_error') {
+            updateLastMessage((m) => ({ ...m, llmError: event.message, llmErrorRecovered: event.recovered }))
           } else if (event.type === 'complete') {
             updateLastMessage((m) => ({
               ...m,

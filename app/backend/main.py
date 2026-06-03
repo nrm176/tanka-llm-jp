@@ -293,6 +293,18 @@ async def stream_task(tid: str) -> StreamingResponse:
     return StreamingResponse(emit(), media_type="text/event-stream", headers=_sse_headers())
 
 
+# ─── Metrics (Phase 2: 品質指標の集計) ───
+
+@app.get("/api/metrics")
+async def get_metrics(session_id: str | None = None) -> dict[str, Any]:
+    """tanka 生成の品質メトリクスを集計して返す。
+
+    - session_id 省略: 全セッション横断
+    - session_id 指定: そのセッションのみ (eval.sh で variant = 1 session の集計に使う)
+    """
+    return db.compute_metrics(session_id=session_id)
+
+
 # ─── Failures (長期記憶) の閲覧・クリア ───
 
 @app.get("/api/failures")

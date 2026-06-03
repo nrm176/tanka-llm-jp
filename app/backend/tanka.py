@@ -287,6 +287,16 @@ HARD_CAP = _env_int("TANKA_HARD_CAP", 50)
 SELF_CRITIQUE_ENABLED = _env_bool("TANKA_SELF_CRITIQUE", True)
 
 
+def _is_context_error(exc: Exception) -> bool:
+    """LM Studio / OpenAI 互換 API のコンテキスト超過エラーを判定する。
+    エラーメッセージ文字列で広めに拾う (プロバイダにより文言が異なるため)。"""
+    msg = str(exc).lower()
+    return any(s in msg for s in (
+        "context size", "context length", "context window",
+        "maximum context", "too many tokens", "exceed",
+    ))
+
+
 async def generate_tanka_pipeline(theme: str, max_refines: int | None = None) -> AsyncIterator[dict[str, Any]]:
     """Plan → Compose (JSON) → Validate → (Refine *) のパイプライン。
     Compose は構造化 JSON で出力させ、validator.py でスコアリング検証する。"""
@@ -378,37 +388,43 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None) ->
     _, composition = split_harmony(composition_raw)
     yield {"type": "phase_end", "phase": "compose", "text": composition}
 
-    refine_history = compose_messages + [{"role": "assistant", "content": composition}]
+    # コンテキスト肥大を防ぐため、ever-growing な会話履歴は持たない。
+    # refine/self-critique の各ラウンドは「固定ベース (compose_messages) + 直近 1 ラウンド」で
+    # 組み立てる。validator critique が問題点を伝えるので、過去全 attempt を保持する必要はない。
+    # これにより context は attempt 数に依存せずほぼ一定に保たれる
+    # (theme 1 で観測した "Context size exceeded" 失敗への対策)。
 
     # ── Phase 1 B4: 自己点検フェーズ ──
     # Compose 直後に LLM 自身に「初稿に問題ないか確認し、必要なら修正版を出せ」と促す。
-    # validator が動く前の自己フィルタ。8B モデルでも明らかな違反 (kigo 重複、季違い等)
-    # を 1 ターンで気づける場合があり、後段の refine 回数を減らせる。
-    # Phase 2 のアブレーション実験のため SELF_CRITIQUE_ENABLED でオン/オフ可能。
+    # validator が動く前の自己フィルタ。Phase 2 で SELF_CRITIQUE_ENABLED により on/off。
+    # コンテキスト超過等で失敗しても致命的でないので、その場合は初稿をそのまま採用する。
     if SELF_CRITIQUE_ENABLED:
         yield {"type": "phase_start", "phase": "self_critique"}
-        self_critique_messages = refine_history + [{"role": "user", "content": (
-            "上記の短歌について自己点検してください。次の観点を確認し、問題があれば修正版を JSON で、"
-            "問題なければ同じ JSON を JSON 形式でそのまま出力してください (前後の説明は付けない)。\n\n"
-            "1. kigo フィールドで宣言した語が、本文 (lines.body) のどこかにちょうど 1 回だけ出現しているか\n"
-            "2. 宣言外の他の季の季語が混在していないか\n"
-            "3. 各句の拍数が 5-7-5-7-7 になっているか (拗音は 1 拍、促音/撥音/長音は各 1 拍)\n"
-            "4. 構想で決めた kigo と season を維持しているか\n"
-            "5. 切れ字や体言止めで余韻が生まれているか"
-        )}]
-        composition_raw = ""
-        async for delta in stream_completion(self_critique_messages):
-            composition_raw += delta
-            yield {"type": "chunk", "phase": "self_critique", "text": delta}
-        _, composition_revised = split_harmony(composition_raw)
-        yield {"type": "phase_end", "phase": "self_critique", "text": composition_revised}
-
-        # 自己修正後の出力を以降の基準にする
-        composition = composition_revised
-        refine_history.append({"role": "user", "content": (
-            "上記の短歌について自己点検し、必要なら修正版を出してください。"
-        )})
-        refine_history.append({"role": "assistant", "content": composition})
+        self_critique_messages = compose_messages + [
+            {"role": "assistant", "content": composition},
+            {"role": "user", "content": (
+                "上記の短歌について自己点検してください。次の観点を確認し、問題があれば修正版を JSON で、"
+                "問題なければ同じ JSON を JSON 形式でそのまま出力してください (前後の説明は付けない)。\n\n"
+                "1. kigo フィールドで宣言した語が、本文 (lines.body) のどこかにちょうど 1 回だけ出現しているか\n"
+                "2. 宣言外の他の季の季語が混在していないか\n"
+                "3. 各句の拍数が 5-7-5-7-7 になっているか (拗音は 1 拍、促音/撥音/長音は各 1 拍)\n"
+                "4. 構想で決めた kigo と season を維持しているか\n"
+                "5. 切れ字や体言止めで余韻が生まれているか"
+            )},
+        ]
+        try:
+            composition_raw = ""
+            async for delta in stream_completion(self_critique_messages):
+                composition_raw += delta
+                yield {"type": "chunk", "phase": "self_critique", "text": delta}
+            _, composition_revised = split_harmony(composition_raw)
+            if composition_revised.strip():
+                composition = composition_revised  # 自己修正後を以降の基準にする
+            yield {"type": "phase_end", "phase": "self_critique", "text": composition}
+        except Exception as e:
+            # 自己点検は任意ステップ。失敗しても初稿で続行する。
+            log.warning("self_critique skipped due to error: %s", e)
+            yield {"type": "phase_end", "phase": "self_critique", "text": composition}
 
     # ── Step 3: Validate (& Refine loop) ──
     # 改善が見られる限り refine し続ける。max_refines=None なら HARD_CAP まで。
@@ -501,22 +517,39 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None) ->
         if failure_summary:
             failure_history.append(failure_summary)
 
-        # Refine: critique + 失敗履歴を含めた再出力指示
-        refine_history.append({"role": "user", "content": (
-            f"{critique}\n\n"
-            f"季語の宣言と本文の整合 (kigo フィールドの語が本文中にちょうど 1 回登場すること)、"
-            f"季違いの回避、拍数 (5-7-5-7-7) を守ったうえで、JSON 形式で再出力してください。"
-            f"{_format_failure_history_block(failure_history)}"
-        )})
+        # Refine: 固定ベース + 直近の出力 + critique のみで組み立てる (context 一定)。
+        refine_messages = compose_messages + [
+            {"role": "assistant", "content": composition},
+            {"role": "user", "content": (
+                f"{critique}\n\n"
+                f"季語の宣言と本文の整合 (kigo フィールドの語が本文中にちょうど 1 回登場すること)、"
+                f"季違いの回避、拍数 (5-7-5-7-7) を守ったうえで、JSON 形式で再出力してください。"
+                f"{_format_failure_history_block(failure_history)}"
+            )},
+        ]
         attempt += 1
         yield {"type": "phase_start", "phase": "refine", "attempt": attempt}
-        composition_raw = ""
-        async for delta in stream_completion(refine_history):
-            composition_raw += delta
-            yield {"type": "chunk", "phase": "refine", "attempt": attempt, "text": delta}
-        _, composition = split_harmony(composition_raw)
-        yield {"type": "phase_end", "phase": "refine", "attempt": attempt, "text": composition}
-        refine_history.append({"role": "assistant", "content": composition})
+        try:
+            composition_raw = ""
+            async for delta in stream_completion(refine_messages):
+                composition_raw += delta
+                yield {"type": "chunk", "phase": "refine", "attempt": attempt, "text": delta}
+            _, composition = split_harmony(composition_raw)
+            yield {"type": "phase_end", "phase": "refine", "attempt": attempt, "text": composition}
+        except Exception as e:
+            # コンテキスト超過や LLM エラーで refine できない場合は、ここまでの best を採用する。
+            # (zero-output 失敗を防ぐ。theme 1 で観測した失敗モードへの保険)
+            log.warning("refine attempt %d failed (%s); falling back to best-so-far", attempt, e)
+            yield {
+                "type": "llm_error",
+                "phase": "refine",
+                "attempt": attempt,
+                "message": str(e),
+                "recovered": best_tanka_obj is not None,
+            }
+            final_tanka_obj = best_tanka_obj
+            final_score = best_score if best_tanka_obj else 0
+            break
 
     # ── 完成 ──
     if final_tanka_obj is not None:

@@ -326,7 +326,7 @@ SSE 配信側は `XREAD BLOCK 5000 STREAMS task:{tid}:events 0-0` で頭から�
 | event type | フィールド | 説明 |
 |---|---|---|
 | `task_meta` | task_id, kind, session_id, status | 接続直後の初期情報 |
-| `phase_start` | phase ("plan"\|"compose"\|"refine"), attempt? | フェーズ開始 |
+| `phase_start` | phase ("plan"\|"compose"\|"self_critique"\|"refine"), attempt? | フェーズ開始 |
 | `chunk` | phase, attempt?, text | LLM 生 delta (フェーズタグ付き) |
 | `phase_end` | phase, attempt?, text | フェーズ完了 (整形後本文) |
 | `validation` | attempt, score, errors, warnings, violations, resolved | 検証結果 |
@@ -589,6 +589,24 @@ curl http://localhost:8001/api/health | jq
 ```
 
 `status` が `degraded` の場合、どのサービスが落ちているか個別フラグで確認できる。
+
+### 評価ハーネス (Phase 2)
+
+パイプライン変更の効果を客観測定する仕組み。`GET /api/metrics` が品質指標を集計し、
+`app/backend/eval/` の `eval.sh` / `compare.sh` で A/B 比較する。
+
+```bash
+cd app/backend/eval
+./eval.sh baseline                              # 現状を測定 → results/
+TANKA_SELF_CRITIQUE=0 docker compose up -d backend   # 設定を変えて backend 再起動
+./eval.sh no-self-critique                      # 変更版を測定
+./compare.sh baseline no-self-critique          # 差分を 改善/劣化 で表示
+```
+
+指標: 初回合格率 / 総合合格率 / 平均 attempt 数 / 平均最終スコア / plateau 率 /
+スコア分布 / ルール別違反頻度。詳細は [`eval/README.md`](../backend/eval/README.md)。
+
+`validator` は副作用ゼロの純関数集合なので pytest で単体テスト可能 (`uv run pytest`、39 ケース)。
 
 ---
 
