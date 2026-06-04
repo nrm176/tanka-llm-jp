@@ -174,6 +174,15 @@ open http://localhost:5178                    # フロント
   context を attempt 数に依存させない。加えて LLM エラー時は best-so-far にフォールバック
 - 詳細は `app/docs/feedback-architecture.md §5`。**会話履歴を全 attempt 蓄積する実装に戻さないこと**
 
+### 6.11 LLM ストリームのサイレントハング (Phase 2 で対策済み)
+- `stream_completion` に timeout が無く、LM Studio の stuck connection で
+  `async for delta in stream_completion(...)` が **無限ブロック** (実測 14 分ハング)
+- context-overflow と違い **例外が出ない** ため try/except では捕捉できない
+- 対策: `AsyncOpenAI` に `httpx.Timeout(read=120s)` を設定。チャンク間の無音が
+  read timeout を超えたら `APITimeoutError` を送出 → refine ループの fallback が best-so-far を採用
+- env: `TANKA_LLM_READ_TIMEOUT` (既定 120s)。thinking モデルは生成中ずっとトークンを出すので、
+  120 秒の無音は確実にハング。**timeout を外す実装に戻さないこと**
+
 ---
 
 ## 7. 設計上の重要な決定 (覆さないように)

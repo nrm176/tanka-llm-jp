@@ -11,6 +11,7 @@ import re
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
+import httpx
 from openai import AsyncOpenAI, OpenAI
 from pykakasi import kakasi
 
@@ -19,10 +20,32 @@ log = logging.getLogger("tanka")
 LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "http://localhost:1234/v1")
 MODEL = os.environ.get("LM_STUDIO_MODEL", "llm-jp-4-8b-thinking")
 
+
+def _env_int_early(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+# ストリーミングのタイムアウト (秒)。
+# read = チャンク間の最大待ち時間。thinking モデルは生成中ずっとトークンを出すので、
+# read を超える「無音」はストリームのハング (LM Studio 側の stuck connection) を意味する。
+# 修正前は timeout 無しで silent hang が発生し、タスクが永遠にブロックした (theme 8 の 14 分ハング)。
+LLM_CONNECT_TIMEOUT = _env_int_early("TANKA_LLM_CONNECT_TIMEOUT", 15)
+LLM_READ_TIMEOUT = _env_int_early("TANKA_LLM_READ_TIMEOUT", 120)
+
+_TIMEOUT = httpx.Timeout(
+    connect=LLM_CONNECT_TIMEOUT,
+    read=LLM_READ_TIMEOUT,
+    write=LLM_CONNECT_TIMEOUT,
+    pool=LLM_CONNECT_TIMEOUT,
+)
+
 # sync client: ヘルスチェック用 (models.list)
-client = OpenAI(base_url=LM_STUDIO_URL, api_key="lm-studio")
-# async client: 実際のストリーミング用
-async_client = AsyncOpenAI(base_url=LM_STUDIO_URL, api_key="lm-studio")
+client = OpenAI(base_url=LM_STUDIO_URL, api_key="lm-studio", timeout=_TIMEOUT)
+# async client: 実際のストリーミング用。timeout でサイレントハングを防ぐ。
+async_client = AsyncOpenAI(base_url=LM_STUDIO_URL, api_key="lm-studio", timeout=_TIMEOUT)
 
 _kks = kakasi()
 

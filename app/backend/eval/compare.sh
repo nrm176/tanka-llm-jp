@@ -96,5 +96,15 @@ for r, bv, av, d in rows[:12]:
         mark = f"  ({'+' if d>0 else ''}{d}) {'悪化' if d>0 else '改善'}"
     print(f"  {r:28s} {bv:>10d} -> {av:>10d}{mark}")
 
+# 誠実性ガード: 各 variant が 1 run の集計なら、差は sampling noise の可能性が高い。
+# 短歌生成は best-of-N サンプリングなので、同一お題でも score は ±10 前後ぶれる
+# (eval-repeat.sh で実測可能)。テーマ数が少ない/1 run 同士の比較は特に要注意。
+print()
+print("⚠ 注意: 各 variant が単一 run の場合、上記の差は sampling noise を含む。")
+print("  短歌生成は best-of-N サンプリングで score は確率変数 (同一お題でも ±10 前後ぶれる)。")
+print("  確実な A/B 判定には eval-repeat.sh で variance を測り、ノイズ幅を超える差のみ採用すること。")
+if a.get("total", 0) != b.get("total", 0):
+    print(f"  さらに total が異なる (before n={b.get('total')}, after n={a.get('total')}) ため、")
+    print("  平均値の直接比較は不適切。同一お題セットで比較すること。")
 print()
 PYEOF

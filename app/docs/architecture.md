@@ -551,6 +551,8 @@ docker compose down -v          # ボリュームも削除 (DB データが消�
 | `TANKA_PLATEAU_WINDOW` | `3` | plateau 検知の窓幅 |
 | `TANKA_HARD_CAP` | `50` | refine 回数の安全上限 |
 | `TANKA_PASS_THRESHOLD` | `80` | 合格スコア閾値 |
+| `TANKA_LLM_READ_TIMEOUT` | `120` | LLM ストリームのチャンク間 timeout (秒)。サイレントハング対策 |
+| `TANKA_LLM_CONNECT_TIMEOUT` | `15` | LLM 接続 timeout (秒) |
 
 #### Validator ルール重み (Phase 1 A5 で追加; Phase 2 のアブレーション用)
 | 変数 | デフォルト | 対象ルール |
