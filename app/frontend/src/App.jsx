@@ -384,6 +384,34 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// ───── セッション ID チップ (LLM に伝えやすくするためのコピー可能 ID 表示) ─────
+
+function SessionIdChip({ id }) {
+  const [copied, setCopied] = useState(false)
+  if (!id) return null
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(id)
+    } catch {
+      // clipboard 不可環境 (非 https 等) でも選択できるよう prompt フォールバック
+      window.prompt('セッション ID (コピーしてください):', id)
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1200)
+  }
+  return (
+    <button
+      className="sid-chip"
+      onClick={copy}
+      title={`セッション ID: ${id}\nクリックで全体をコピー`}
+    >
+      <span className="sid-label">ID</span>
+      <span className="sid-value">{id.slice(0, 8)}…</span>
+      <span className="sid-copy">{copied ? '✓ コピー' : '📋'}</span>
+    </button>
+  )
+}
+
 // ───── メインアプリ ─────
 
 function AppInner() {
@@ -825,6 +853,7 @@ function AppInner() {
             >評価モニタ</button>
           </div>
           <div className="header-right">
+            {view === 'chat' && <SessionIdChip id={activeId} />}
             <button
               className="header-link"
               onClick={() => setShowFailures(true)}

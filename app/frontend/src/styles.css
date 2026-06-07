@@ -899,3 +899,19 @@ textarea:disabled { color: #999; }
   font-size: 14px; color: #4a3f2a; letter-spacing: 0.03em;
 }
 .rag-attr { font-size: 11px; color: #a08a5b; margin-top: 3px; }
+
+/* ── session ID チップ (コピー可能、LLM へ伝える用) ── */
+.sid-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid #ddd; background: #fafafa; border-radius: 14px;
+  padding: 3px 8px; font-size: 11px; color: #666; cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  transition: background 0.1s, border-color 0.1s;
+}
+.sid-chip:hover { background: #f0f0f0; border-color: #999; }
+.sid-label {
+  background: #e0e0e0; color: #555; border-radius: 3px;
+  padding: 0 4px; font-size: 9px; font-weight: 600; letter-spacing: 0.04em;
+}
+.sid-value { color: #444; letter-spacing: 0.02em; }
+.sid-copy { font-size: 10px; color: #888; }
