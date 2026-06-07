@@ -154,11 +154,14 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
         "image": None,
         "emotion": None,
         "final_score": None,
+        "rag_examples": [],  # RAG で参照した古典作例
     }
     try:
         async for event in tanka.generate_tanka_pipeline(theme, max_refines=max_refines):
             etype = event.get("type")
-            if etype == "complete":
+            if etype == "rag":
+                final_state["rag_examples"] = event.get("examples", [])
+            elif etype == "complete":
                 final_state["plan"] = event.get("plan")
                 final_state["tanka"] = event.get("tanka")
                 final_state["moras"] = event.get("moras", [])

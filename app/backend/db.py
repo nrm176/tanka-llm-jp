@@ -124,9 +124,12 @@ def append_message(session_id: str, message: dict) -> dict:
         "$set": {"updated_at": _now()},
     }
 
-    # 最初の user メッセージが入った時点でセッションタイトルを更新
+    # 最初の user メッセージが入った時点でセッションタイトルを自動設定する。
+    # ただし **明示的に付けられたタイトルは上書きしない** (デフォルトの "新規セッション" のときだけ)。
+    # これを怠ると eval.sh が付けた "[eval] <variant>" タイトルが最初の tanka: で潰れ、
+    # 評価モニタが run を識別できなくなる (実際に踏んだバグ)。
     sess = _sessions().find_one({"_id": oid}, projection={"title": 1, "messages.kind": 1})
-    if sess:
+    if sess and sess.get("title") == "新規セッション":
         existing_user = any(m.get("kind") == "user" for m in sess.get("messages", []))
         if not existing_user and msg.get("kind") == "user":
             content = (msg.get("content") or "").strip().replace("\n", " ")
@@ -409,3 +412,64 @@ def _aggregate_tanka_metrics(tanka_msgs: list[dict]) -> dict[str, Any]:
         "violation_frequency": violation_freq_sorted,
         "violation_by_severity": severity_freq,
     }
+
+
+# ─── Eval Monitor (Phase 2 UI): eval/repeat セッションの一覧と進捗サマリ ───
+# eval.sh は title="[eval] <variant> <ts>"、eval-repeat.sh は title="[repeat N] <slug>" で
+# セッションを作る。それらを拾って、テーマ別スコア・進捗・実行中テーマを返す。
+
+import re as _re
+
+_EVAL_TITLE_RE = _re.compile(r"^\[(eval|repeat)([^\]]*)\]\s*(.*)$")
+
+
+def list_eval_runs(limit: int = 50) -> list[dict]:
+    """eval/repeat セッションを新しい順に、進捗サマリ付きで返す。"""
+    cursor = (
+        _sessions()
+        .find({"title": {"$regex": r"^\[(eval|repeat)"}})
+        .sort("updated_at", -1)
+        .limit(limit)
+    )
+    runs: list[dict] = []
+    for doc in cursor:
+        sid = str(doc["_id"])
+        title = doc.get("title", "")
+        m = _EVAL_TITLE_RE.match(title)
+        kind = m.group(1) if m else "eval"
+        variant = (m.group(3) or "").strip() if m else title
+
+        tankas = [msg for msg in doc.get("messages", []) if msg.get("kind") == "tanka"]
+        per_theme = [
+            {
+                "theme": t.get("theme"),
+                "score": t.get("final_score"),
+                "attempts": len(t.get("validations") or []),
+                "plateau": bool(t.get("plateau_reached")),
+                "kigo": t.get("kigo"),
+                "season": t.get("season"),
+            }
+            for t in tankas
+        ]
+        scores = [t["score"] for t in per_theme if isinstance(t["score"], int)]
+
+        active = find_active_task(sid)
+        running_theme = None
+        if active:
+            running_theme = (active.get("input") or {}).get("theme")
+
+        runs.append({
+            "id": sid,
+            "title": title,
+            "kind": kind,
+            "variant": variant,
+            "created_at": doc.get("created_at").isoformat() if doc.get("created_at") else None,
+            "updated_at": doc.get("updated_at").isoformat() if doc.get("updated_at") else None,
+            "done": len(per_theme),
+            "scores": scores,
+            "avg_score": round(sum(scores) / len(scores), 1) if scores else None,
+            "running_theme": running_theme,
+            "status": "running" if active else "idle",
+            "themes": per_theme,
+        })
+    return runs

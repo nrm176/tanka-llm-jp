@@ -96,15 +96,22 @@ open http://localhost:5178                    # フロント
 | `app/backend/tasks.py` | asyncio Task の lifecycle (起動/cancel/cleanup)、SSE への event emit、長期失敗の記録 | 新タスク種別追加時 |
 | `app/backend/tanka.py` | LLM パイプライン本体 (Plan → Compose → Validate → Refine ループ) | パイプライン構造変更時 |
 | `app/backend/validator.py` | Pydantic `Tanka` + 9 ルール + スコアリング + critique 整形 + 長期記憶用 lesson 化 | ルール追加時 |
+| `app/backend/rag.py` | 古典短歌コーパスからの構造的検索 (季語/季節 match)。compose に作例注入 | コーパス/検索変更時 |
 | `app/backend/db.py` | MongoDB CRUD のみ (副作用唯一の境界) | スキーマ変更時 |
 | `app/backend/bus.py` | Redis Streams 操作のみ (XADD/XREAD/EXPIRE) | ブローカ層変更時 |
 | `app/backend/data/kigo.json` | 226 季語 × 5 季のキュレーション | 季語追加時 |
+| `app/backend/data/classical_tanka.json` | RAG 用の古典名歌 31 首 (古今集/新古今集等、PD) | 作例追加時 |
 
 **重要な依存方向**:
 
-- `tanka.py` は `db` / `validator` を遅延 import する (循環参照回避)
+- `tanka.py` は `db` / `validator` / `rag` を遅延 import する (循環参照回避)
 - `validator.py` は `tanka` の helpers (kanji_to_hira, count_moras) を import する
-- `db.py` / `bus.py` はどこにも依存しない (最下層)
+- `db.py` / `bus.py` / `rag.py` はどこにも依存しない (最下層、副作用なし)
+
+**RAG (Phase 3)**: `rag.retrieve(season, kigo)` が季語 exact → 同季 → 雑 の優先で
+古典作例を返し、`tanka.py` の compose プロンプトに「参考」として注入する (`TANKA_RAG=1` で
+既定 ON、toggle で A/B 可能)。embedding は使わず構造的検索 (LM Studio embedding の不安定さ回避)。
+模倣防止はプロンプトで明示。`rag` SSE イベントで UI に retrieval 結果を表示。
 
 ---
 
@@ -182,6 +189,19 @@ open http://localhost:5178                    # フロント
   read timeout を超えたら `APITimeoutError` を送出 → refine ループの fallback が best-so-far を採用
 - env: `TANKA_LLM_READ_TIMEOUT` (既定 120s)。thinking モデルは生成中ずっとトークンを出すので、
   120 秒の無音は確実にハング。**timeout を外す実装に戻さないこと**
+
+### 6.12 auto-title がセッションタイトルを上書きする (評価モニタ導入時に発覚)
+- `db.append_message` は最初の user メッセージでタイトルを自動設定するが、
+  これが **明示的に付けたタイトルも潰していた** (eval.sh の `[eval] <variant>` が `tanka:...` に化ける)
+- 結果、評価モニタが eval run を識別できなかった
+- 対策: auto-title は **現タイトルがデフォルト "新規セッション" のときだけ** 適用する
+- 副次効果: ユーザーが rename したセッションも保護される。**この条件を外さないこと**
+
+### 6.13 LM Studio の sustained-load 劣化 (環境制約、コードではない)
+- このホストで LM Studio は連続生成負荷下に **15s/call → 3.5min/call + HTTP 400** で oscillate
+- 自動 eval が大半失敗することがある (variance 実験で 5 回中 3 回 null)。コードは fail-clean (ハングなし)
+- 対策にはモデルの fresh reload + run 間の間隔。**eval 中に診断 streaming を投げない** (load 上乗せで悪化)
+- 詳細は `app/backend/eval/FINDINGS.md §5`
 
 ---
 

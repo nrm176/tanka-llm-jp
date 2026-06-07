@@ -326,6 +326,7 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None) ->
 
     # 循環 import 回避のため遅延 import
     import db
+    import rag
     import validator
 
     log.info("tanka pipeline start: theme=%s", theme)
@@ -371,6 +372,42 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None) ->
         log.info("injecting %d long-term failure example(s) (season_hint=%s)",
                  len(long_term_failures), season_hint)
 
+    # ── RAG: 古典の名歌を retrieval して compose に注入 ──
+    # 季語・季節が一致する古典作例を見せ、8B モデルの語彙・作法不足を補う。
+    # 既に few-shot にある歌は exclude して重複を避ける。
+    rag_examples: list[dict] = []
+    rag_block = ""
+    if rag.RAG_ENABLED:
+        try:
+            # Plan 抽出が失敗した (season/kigo が None) 場合は、お題と plan テキストを
+            # 季語辞書でスキャンして hint を回収する (8B の Plan フォーマット揺れ対策)。
+            rag_season, rag_kigo = season_hint, kigo_hint
+            if not rag_kigo or not rag_season:
+                found = validator.find_kigo_in_text(f"{theme} {plan}")
+                if found:
+                    fk, fs = found[0]
+                    rag_kigo = rag_kigo or fk
+                    rag_season = rag_season or fs
+            few_shot_texts = tuple(
+                m["content"].split("\n")[0]  # ダミー (few-shot は JSON なので実質重複しない)
+                for m in TANKA_COMPOSE_FEW_SHOT if m["role"] == "assistant"
+            )
+            rag_examples = rag.retrieve(rag_season, rag_kigo, exclude_texts=few_shot_texts)
+            rag_block = rag.format_examples(rag_examples)
+            if rag_examples:
+                log.info("RAG: retrieved %d classical example(s) for season=%s kigo=%s",
+                         len(rag_examples), rag_season, rag_kigo)
+                yield {
+                    "type": "rag",
+                    "examples": [
+                        {"text": p.get("text"), "author": p.get("author"),
+                         "source": p.get("source"), "kigo": p.get("kigo"), "season": p.get("season")}
+                        for p in rag_examples
+                    ],
+                }
+        except Exception as e:
+            log.warning("RAG retrieval failed: %s", e)
+
     # ── Step 2: Compose (JSON) ──
     failure_history: list[str] = []  # 各 attempt の失敗要約 (短期記憶)
 
@@ -395,6 +432,7 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None) ->
                 f"お題: {theme}\n"
                 f"構想:\n{plan}"
                 + plan_constraint
+                + rag_block
                 + validator.format_long_term_failures(long_term_failures)
                 + _format_failure_history_block(failure_history)
                 + "\nJSON 形式で短歌を出力してください (前後に説明は付けない)。"

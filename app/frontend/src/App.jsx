@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { marked } from 'marked'
+import EvalMonitor from './EvalMonitor.jsx'
 import {
   cancelTask,
   checkHealth,
@@ -176,6 +177,19 @@ function TankaMessage({ msg }) {
   return (
     <div className="msg msg-tanka">
       <div className="tanka-header">短歌生成: お題「{msg.theme}」</div>
+      {msg.ragExamples && msg.ragExamples.length > 0 && (
+        <details className="rag-block">
+          <summary>📜 参考にした古典の名歌 ({msg.ragExamples.length})</summary>
+          <div className="rag-list">
+            {msg.ragExamples.map((p, i) => (
+              <div key={i} className="rag-item">
+                <div className="rag-poem">{String(p.text || '').split('\n').join(' / ')}</div>
+                <div className="rag-attr">— {p.author}（{p.source}） 季語: {(p.kigo || []).join('・') || '—'}</div>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
       {msg.phases?.map((p, i) => (
         <PhaseBlock
           key={`${p.phase}-${p.attempt ?? 0}-${i}`}
@@ -382,6 +396,7 @@ function AppInner() {
   const [health, setHealth] = useState({ status: 'checking' })
   const [error, setError] = useState(null)
   const [showFailures, setShowFailures] = useState(false)
+  const [view, setView] = useState('chat') // 'chat' | 'eval'
 
   const abortRef = useRef(null)
   const scrollRef = useRef(null)
@@ -462,7 +477,9 @@ function AppInner() {
             }))
           }
         } else if (kind === 'tanka') {
-          if (event.type === 'phase_start') {
+          if (event.type === 'rag') {
+            updateLastMessage((m) => ({ ...m, ragExamples: event.examples }))
+          } else if (event.type === 'phase_start') {
             updateLastMessage((m) => ({
               ...m,
               phases: [...(m.phases || []), { phase: event.phase, attempt: event.attempt, raw: '', complete: false }],
@@ -797,6 +814,16 @@ function AppInner() {
       <div className="main">
         <header>
           <div className="title">llm-jp Tanka Chat</div>
+          <div className="view-toggle">
+            <button
+              className={'view-tab' + (view === 'chat' ? ' active' : '')}
+              onClick={() => setView('chat')}
+            >チャット</button>
+            <button
+              className={'view-tab' + (view === 'eval' ? ' active' : '')}
+              onClick={() => setView('eval')}
+            >評価モニタ</button>
+          </div>
           <div className="header-right">
             <button
               className="header-link"
@@ -814,6 +841,10 @@ function AppInner() {
 
         {showFailures && <FailuresPanel onClose={() => setShowFailures(false)} />}
 
+        {view === 'eval' && <EvalMonitor />}
+
+        {view === 'chat' && (
+        <>
         <main ref={scrollRef}>
           {messages.length === 0 && (
             <div className="empty">
@@ -871,6 +902,8 @@ function AppInner() {
             送信ボタンをクリック、または <kbd>⌘ / Ctrl</kbd> + <kbd>Enter</kbd> で送信。Enter は改行。
           </div>
         </footer>
+        </>
+        )}
       </div>
     </div>
   )

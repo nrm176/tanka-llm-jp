@@ -305,6 +305,15 @@ async def get_metrics(session_id: str | None = None) -> dict[str, Any]:
     return db.compute_metrics(session_id=session_id)
 
 
+# ─── Eval Monitor (Phase 2 UI): eval/repeat run の進捗を観測する ───
+
+@app.get("/api/eval/runs")
+async def get_eval_runs() -> list[dict]:
+    """eval.sh / eval-repeat.sh が作った eval セッションを、進捗サマリ付きで返す。
+    フロントの「評価モニタ」がこれをポーリングして各 run の状況を表示する。"""
+    return db.list_eval_runs()
+
+
 # ─── Failures (長期記憶) の閲覧・クリア ───
 
 @app.get("/api/failures")

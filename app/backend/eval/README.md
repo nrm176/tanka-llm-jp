@@ -11,8 +11,16 @@
 |---|---|
 | `eval_themes.json` | 固定お題セット (50 件、四季 × 古典/現代 × 抽象/具体)。**安易に変更しない** (変えると過去結果と比較不能) |
 | `eval.sh` | 1 バリアントを 1 セッションで順次生成し、メトリクスを `results/` に保存 |
-| `compare.sh` | 2 つの結果を比較し、差分を 改善/劣化 ラベル付きで表示 |
+| `eval-repeat.sh` | 同一お題を N 回生成し variance (mean/std/range) を測る。best-of-N の振れ幅を定量化 |
+| `compare.sh` | 2 つの結果を比較し、差分を 改善/劣化 + sampling-noise 警告付きで表示 |
 | `results/` | 各実行の結果 JSON (`<timestamp>-<variant>.json`) |
+| `FINDINGS.md` | Phase 2 の知見ログ (ベースライン・variance・バグ・環境制約) |
+
+### 評価モニタ UI
+
+ブラウザ (http://localhost:5178) のヘッダー「評価モニタ」タブで、走行中・完了済みの
+eval run の状況をライブ表示できる (`GET /api/eval/runs` を 3 秒ポーリング)。
+run ごとに variant・進捗・実行中テーマ・score スパークライン・per-theme テーブル + 統計を表示。
 
 メトリクスは backend の `GET /api/metrics?session_id=<sid>` が算出する (`db.compute_metrics`)。
 

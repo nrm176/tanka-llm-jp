@@ -139,6 +139,14 @@ export async function deleteSession(id) {
   return res.json()
 }
 
+// ─── Eval Monitor ───
+
+export async function listEvalRuns() {
+  const res = await fetch('/api/eval/runs')
+  if (!res.ok) throw new Error(`listEvalRuns HTTP ${res.status}`)
+  return res.json()
+}
+
 // ─── Failures (長期失敗記憶) ───
 
 export async function listFailures(limit = 50) {
@@ -178,6 +186,7 @@ export function normalizeMessage(msg) {
       maxRefinesReached: msg.max_refines_reached || false,
       plateauReached: msg.plateau_reached || false,
       bestScore: typeof msg.best_score === 'number' ? msg.best_score : undefined,
+      ragExamples: msg.rag_examples || [],
       complete: msg.tanka
         ? {
             tanka: msg.tanka,
