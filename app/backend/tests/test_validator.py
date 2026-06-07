@@ -442,6 +442,63 @@ def test_theme_time_adjacent_ok():
     assert "theme_time_mismatch" not in {v.rule for v in result.violations}
 
 
+# ─── テーマ時刻の「欠如」(theme_time_uncovered) ───
+
+def test_theme_time_uncovered_flagged_when_no_time_word():
+    # お題「夏の夕暮れ」だが本文に時刻語が皆無 → minor で uncovered (矛盾ではなく欠如)
+    t = make_tanka(kigo="花", season="春", lines=[
+        ("花が散る", "はながちる"),
+        ("水面光る", "みなもひかる"),
+        ("山の影に", "やまのかげに"),
+        ("風そよぐなり", "かぜそよぐなり"),
+        ("遠き面影", "とおきおもかげ"),
+    ])
+    result = validator.evaluate(t, theme="夏の夕暮れ")
+    fired = {v.rule for v in result.violations}
+    assert "theme_time_uncovered" in fired
+    assert "theme_time_mismatch" not in fired  # 矛盾ではなく欠如
+
+
+def test_theme_time_uncovered_silent_with_dusk_imagery():
+    # 「茜」(夕の景物) を含めば uncovered は出ない (imagery で時刻を暗示)
+    t = make_tanka(kigo="花", season="春", lines=[
+        ("茜さす", "あかねさす"),
+        ("空のかなたに", "そらのかなたに"),
+        ("花散りて", "はなちりて"),
+        ("風のそよげば", "かぜのそよげば"),
+        ("遠き山並み", "とおきやまなみ"),
+    ])
+    result = validator.evaluate(t, theme="夏の夕暮れ")
+    assert "theme_time_uncovered" not in {v.rule for v in result.violations}
+
+
+def test_theme_time_uncovered_silent_when_theme_timeless():
+    # お題に時刻指定が無ければ発火しない
+    t = make_tanka(kigo="花", season="春", lines=[
+        ("花が散る", "はながちる"),
+        ("水面光る", "みなもひかる"),
+        ("山の影に", "やまのかげに"),
+        ("風そよぐなり", "かぜそよぐなり"),
+        ("遠き面影", "とおきおもかげ"),
+    ])
+    result = validator.evaluate(t, theme="春の花野")
+    assert "theme_time_uncovered" not in {v.rule for v in result.violations}
+
+
+def test_theme_time_uncovered_is_minor():
+    # 単独では合格を妨げない軽微な減点 (false positive を許容できる安全弁)
+    t = make_tanka(kigo="花", season="春", lines=[
+        ("花が散る", "はながちる"),
+        ("水面光る", "みなもひかる"),
+        ("山の影に", "やまのかげに"),
+        ("風そよぐなり", "かぜそよぐなり"),
+        ("遠き面影", "とおきおもかげ"),
+    ])
+    result = validator.evaluate(t, theme="夏の夕暮れ")
+    unc = [v for v in result.violations if v.rule == "theme_time_uncovered"]
+    assert unc and unc[0].severity == "minor"
+
+
 def test_theme_time_no_time_in_theme():
     # お題に時刻指定がなければチェックしない
     t = make_tanka(kigo="蛍", season="夏", lines=[
@@ -496,7 +553,8 @@ def test_every_rule_has_a_lesson():
         "kigo_present", "kigo_unique", "kigo_in_dictionary",
         "season_consistent", "no_other_kigo_cross", "no_other_kigo_same",
         "repeated_word", "kireji_absent",
-        "season_matches_plan", "kigo_matches_plan", "theme_time_mismatch", "schema_invalid",
+        "season_matches_plan", "kigo_matches_plan", "theme_time_mismatch",
+        "theme_time_uncovered", "schema_invalid",
     }
     missing = rule_names - set(validator.LESSONS.keys())
     assert not missing, f"LESSONS に欠けているルール: {missing}"
