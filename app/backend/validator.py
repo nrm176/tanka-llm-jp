@@ -26,7 +26,7 @@ from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-import tanka  # 既存のモーラ計算等を利用
+import reading  # 読み・拍数の葉モジュール (tanka への逆依存を解消)
 
 log = logging.getLogger("validator")
 
@@ -54,15 +54,17 @@ RULE_WEIGHTS: dict[str, int] = {
     "kigo_unique":           _env_int("TANKA_W_KIGO_UNIQUE", 15),
     "season_consistent":     _env_int("TANKA_W_SEASON_CONSISTENT", 20),
     "kigo_matches_plan":     _env_int("TANKA_W_KIGO_MATCHES_PLAN", 20),
-    "no_other_kigo_cross":   _env_int("TANKA_W_NO_OTHER_KIGO_CROSS", 15),
+    "no_other_kigo_cross":   _env_int("TANKA_W_NO_OTHER_KIGO_CROSS", 30),
     # minor
-    "no_other_kigo_same":    _env_int("TANKA_W_NO_OTHER_KIGO_SAME", 5),
+    "no_other_kigo_same":    _env_int("TANKA_W_NO_OTHER_KIGO_SAME", 25),
     "kigo_in_dictionary":    _env_int("TANKA_W_KIGO_IN_DICTIONARY", 5),
     "repeated_word":         _env_int("TANKA_W_REPEATED_WORD", 3),
     "mora_count_disputed":   _env_int("TANKA_W_MORA_DISPUTED", 3),
     # 新規 (Phase 1)
     "mora_count_off_by_one": _env_int("TANKA_W_MORA_OFF_BY_ONE", 3),   # B5b: 字余り/字足らず
     "kireji_absent":         _env_int("TANKA_W_KIREJI_ABSENT", 3),     # B5a+B5c: 句切れ・体言止め
+    # お題との整合 (theme-aware)
+    "theme_time_mismatch":   _env_int("TANKA_W_THEME_TIME_MISMATCH", 25),  # 夕暮れのお題に朝 等
 }
 
 
@@ -181,11 +183,11 @@ def _rule_mora_count(t: Tanka) -> list[Violation]:
     expected = [5, 7, 5, 7, 7]
     out: list[Violation] = []
     for i, line in enumerate(t.lines):
-        canonical = tanka.kanji_to_hira(line.body)
-        actual = tanka.count_moras(canonical)
+        canonical = reading.kanji_to_hira(line.body)
+        actual = reading.count_moras(canonical)
         if actual == expected[i]:
             continue
-        model_count = tanka.count_moras(line.reading)
+        model_count = reading.count_moras(line.reading)
 
         if model_count == expected[i]:
             # モデル提供の読みは正しい拍数。pykakasi の辞書違いの可能性が高い。
@@ -267,9 +269,64 @@ def _rule_season_consistent(t: Tanka) -> list[Violation]:
     return []
 
 
+# 裸の季節名。宣言季と同じならただの季節ラベルなので「競合する季語」とは見なさない
+# (例: 季語=桜 の春の歌で本文に「春」が出るのは正常)。ただし宣言季と違えば季違いとして検出する
+# (例: 冬の歌に「春」が出るのは誤り)。
+_SEASON_LABEL_WORDS = {"春", "夏", "秋", "冬", "新年"}
+
+
+# ─── 時間帯 (お題整合チェック用) ───
+# お題が時刻を指定している (例「夕暮れ」) のに、短歌が反対の時刻 (例「朝」) で詠まれる
+# 失敗を捉える。朝(0)→昼(1)→夕(2)→夜(3) の順で並べ、2 バンド以上離れたら矛盾とみなす
+# (夕→夜 のような隣接は自然な移ろいなので許容、朝↔夕/朝↔夜/昼↔夜 のみ矛盾)。
+_TIME_BANDS: list[tuple[str, list[str]]] = [
+    ("朝", ["朝", "朝光", "朝日", "朝空", "朝靄", "曙", "暁", "夜明け", "あけぼの", "しののめ", "東雲"]),
+    ("昼", ["昼", "真昼", "日中", "白昼", "正午"]),
+    ("夕", ["夕", "夕暮", "夕焼", "夕映", "夕日", "夕闇", "黄昏", "たそがれ", "暮れ"]),
+    ("夜", ["夜", "夜半", "夜更け", "真夜中", "深夜", "宵", "月夜"]),
+]
+
+
+def _detect_time_bands(text: str) -> set[int]:
+    """テキストに現れる時間帯のインデックス集合を返す (朝=0, 昼=1, 夕=2, 夜=3)。"""
+    bands: set[int] = set()
+    for idx, (_, words) in enumerate(_TIME_BANDS):
+        if any(w in text for w in words):
+            bands.add(idx)
+    return bands
+
+
+def _check_theme_time(t: Tanka, theme: str) -> list[Violation]:
+    """お題が時刻を含むのに、短歌が 2 バンド以上離れた時刻を詠んでいたら違反。"""
+    theme_bands = _detect_time_bands(theme)
+    if not theme_bands:
+        return []  # お題に時刻指定なし
+    body = "".join(line.body for line in t.lines)
+    body_bands = _detect_time_bands(body)
+    if not body_bands or (theme_bands & body_bands):
+        return []  # 短歌に時刻語なし、または お題の時刻と一致する語を含む → OK
+    # 最も近いバンド距離を見る。2 以上離れていれば矛盾
+    min_dist = min(abs(tb - bb) for tb in theme_bands for bb in body_bands)
+    if min_dist < 2:
+        return []  # 隣接 (夕→夜 等) は自然な移ろいとして許容
+    theme_names = "・".join(_TIME_BANDS[i][0] for i in sorted(theme_bands))
+    body_names = "・".join(_TIME_BANDS[i][0] for i in sorted(body_bands))
+    return [_violation(
+        "theme_time_mismatch", "critical", _w("theme_time_mismatch"),
+        f"お題は時間帯「{theme_names}」を指しているのに、短歌は「{body_names}」の情景になっています。"
+        f"お題の時刻に合わせて詠み直してください。"
+    )]
+
+
 def _rule_no_other_kigo(t: Tanka) -> list[Violation]:
-    """本体に、宣言された季語以外の (辞書登録された) 季語が現れていないか。
-    特に異なる季の季語が混在 (季違い) していないかを検出する。"""
+    """一首一季語の厳格運用: 宣言した季語**以外の季語を一切含めない**。
+
+    宣言外の季語が見つかったら、季違い(cross)・季重なり(same) のいずれも critical 違反とする。
+    重みは 1 つでも合格 (PASS_THRESHOLD) を割るよう設定してあり、refine ループが
+    宣言外季語を必ず除去するまで回る。
+
+    例外: 宣言季と同じ季の「裸の季節名」(春/夏/秋/冬/新年) は季節ラベルとして許容する
+    (競合する景物ではないため)。宣言季と異なる季節名は季違いとして検出する。"""
     body_text = "".join(line.body for line in t.lines)
     found = find_kigo_in_text(body_text)
     out: list[Violation] = []
@@ -277,24 +334,28 @@ def _rule_no_other_kigo(t: Tanka) -> list[Violation]:
     for kigo, season in found:
         if kigo == t.kigo:
             continue
+        # 宣言季と同じ季の裸の季節名はラベル扱いで許容
+        if kigo in _SEASON_LABEL_WORDS and season == t.season:
+            continue
         seen_other[kigo] = season
 
     if not seen_other:
         return out
 
-    # 季違い (declared と違う季の他季語) は major、同季の他季語は minor
     for kigo, season in seen_other.items():
         if season != t.season:
             out.append(_violation(
-                "no_other_kigo_cross", "major", _w("no_other_kigo_cross"),
-                f"宣言外の季語「{kigo}」({season}) が本文に含まれており、"
-                f"宣言季「{t.season}」と異なる季違いです。"
+                "no_other_kigo_cross", "critical", _w("no_other_kigo_cross"),
+                f"宣言外の季語「{kigo}」({season}) が本文に含まれています。"
+                f"宣言季「{t.season}」と異なる季違いであり、宣言した季語以外は禁止です。"
+                f"該当語を無季の言葉に置き換えてください。"
             ))
         else:
             out.append(_violation(
-                "no_other_kigo_same", "minor", _w("no_other_kigo_same"),
-                f"宣言外の同季季語「{kigo}」({season}) が本文に含まれています。"
-                f"季語が複数あると焦点がぼやけるため、いずれかに整理することを推奨します。"
+                "no_other_kigo_same", "critical", _w("no_other_kigo_same"),
+                f"宣言外の季語「{kigo}」({season}) が本文に含まれています。"
+                f"一首一季語の原則により、宣言した季語「{t.kigo}」以外の季語は禁止です。"
+                f"該当語を無季の言葉に置き換えてください。"
             ))
     return out
 
@@ -412,12 +473,13 @@ def evaluate(
     *,
     expected_season: str | None = None,
     expected_kigo: str | None = None,
+    theme: str | None = None,
 ) -> ValidationResult:
-    """通常ルール + (任意で) Plan 由来の期待値との整合チェック。
+    """通常ルール + (任意で) Plan 由来の期待値・お題との整合チェック。
 
     expected_season / expected_kigo を渡すと、それと一致しない場合に大きな違反として
-    score を下げる。Plan ステップ → Compose ステップの間で季節や季語がすり替わる
-    現象 (8B モデルにありがち) を強制矯正するためのもの。"""
+    score を下げる (Plan→Compose のすり替え矯正)。
+    theme を渡すと、お題が指定する時間帯 (夕暮れ等) と短歌の時刻矛盾を検出する。"""
     violations: list[Violation] = []
     for rule in RULES:
         violations.extend(rule(t))
@@ -434,6 +496,8 @@ def evaluate(
             f"構想で決めた季語「{expected_kigo}」と出力の kigo「{t.kigo}」が一致しません。"
             f"構想で選んだ季語をそのまま使ってください。"
         ))
+    if theme:
+        violations.extend(_check_theme_time(t, theme))
 
     score = max(0, 100 - sum(v.weight for v in violations))
     return ValidationResult(
@@ -525,12 +589,13 @@ def format_schema_critique(error_msg: str) -> str:
 # ルール名 → 「次回に活かすべき短い教訓」。anti-example の本文で使う。
 LESSONS: dict[str, str] = {
     "kigo_unique": "宣言した季語は本文中ちょうど 1 回だけ出現させる (再利用禁止)",
-    "no_other_kigo_cross": "宣言した季と異なる季の季語を本文に含めない (季違い回避)",
-    "no_other_kigo_same": "宣言外の季語も含めると焦点がぼやける。一首一季語に絞る",
+    "no_other_kigo_cross": "宣言した季語以外の季語を本文に一切入れない。特に異なる季の季語は厳禁",
+    "no_other_kigo_same": "宣言した季語以外の季語は同季でも禁止。一首には季語をちょうど一つだけ",
     "kigo_present": "kigo フィールドで宣言した語を、必ず本文 lines のどこかに登場させる",
     "season_consistent": "宣言する季節は、選んだ季語の本来の季と一致させる",
     "season_matches_plan": "構想ステップで決めた季節を勝手に変更しない",
     "kigo_matches_plan": "構想ステップで決めた季語をそのまま使う",
+    "theme_time_mismatch": "お題が指す時間帯 (夕暮れ・朝・夜 等) に合った情景を詠む",
     "kigo_in_dictionary": "なるべく一般的に通用する季語を選ぶ",
     "mora_count": "拍数 5-7-5-7-7 を厳守する。漢字の現代読みでも数えられるようにする",
     "mora_count_off_by_one": "字余り・字足らずは ±1 まで許容されるが、特に意図がなければ整える",
@@ -577,19 +642,24 @@ def format_long_term_failures(failures: list[dict]) -> str:
 _SEASON_RE = re.compile(r"季節[:：]\s*(春|夏|秋|冬|新年|雑)")
 # 季語は (空白/改行) までの 1 トークンとして抽出。括弧や読み仮名注釈は捨てる。
 _KIGO_RE = re.compile(r"季語[:：]\s*([^\s\n、。()（）]+)")
+# JSON 形式の Plan ("season": "夏" / "kigo": "蝉時雨") も拾う。
+# 8B モデルは Plan を指示形式 (季語:) でなく JSON で返すことがあり、その場合に
+# テキスト regex だと抽出失敗 → Plan-Compose 整合ガードが無効化される事故が起きた。
+_JSON_SEASON_RE = re.compile(r'["\']season["\']\s*[:：]\s*["\'](春|夏|秋|冬|新年|雑)["\']')
+_JSON_KIGO_RE = re.compile(r'["\']kigo["\']\s*[:：]\s*["\']([^"\']+)["\']')
 
 
 def extract_season_from_plan(plan_text: str) -> str | None:
-    """plan ステップの出力から季節文字を抽出する。失敗したら None。"""
+    """plan の出力から季節を抽出する。テキスト形式 (季節: 夏) と JSON 形式の両方に対応。"""
     if not plan_text:
         return None
-    m = _SEASON_RE.search(plan_text)
+    m = _SEASON_RE.search(plan_text) or _JSON_SEASON_RE.search(plan_text)
     return m.group(1) if m else None
 
 
 def extract_kigo_from_plan(plan_text: str) -> str | None:
-    """plan ステップの出力から季語を抽出する。失敗したら None。"""
+    """plan の出力から季語を抽出する。テキスト形式 (季語: 蝉) と JSON 形式の両方に対応。"""
     if not plan_text:
         return None
-    m = _KIGO_RE.search(plan_text)
-    return m.group(1) if m else None
+    m = _KIGO_RE.search(plan_text) or _JSON_KIGO_RE.search(plan_text)
+    return m.group(1).strip() if m else None

@@ -56,6 +56,14 @@ services:
       MONGO_URL: mongodb://mongo:27017
       MONGO_DB: tanka_chat
       REDIS_URL: redis://redis:6379/0
+      # eval/ablation 用の TANKA_* 上書き口 (未指定なら各モジュールの既定値が効く)。
+      # 例: TANKA_DYNAMIC_FEWSHOT=0 docker compose up -d backend && ./eval.sh baseline
+      TANKA_DYNAMIC_FEWSHOT: ${TANKA_DYNAMIC_FEWSHOT:-1}
+      TANKA_SELF_CRITIQUE: ${TANKA_SELF_CRITIQUE:-1}
+      TANKA_RAG: ${TANKA_RAG:-1}
+      TANKA_RAG_METADATA_FIRST: ${TANKA_RAG_METADATA_FIRST:-0}
+      TANKA_HARD_CAP: ${TANKA_HARD_CAP:-50}
+      TANKA_PLATEAU_WINDOW: ${TANKA_PLATEAU_WINDOW:-3}
     extra_hosts:
       # Linux でも host.docker.internal が解決されるように
       - "host.docker.internal:host-gateway"

@@ -15,6 +15,7 @@ from typing import Any
 
 import db
 import bus as q
+import llm
 import tanka
 
 log = logging.getLogger("tasks")
@@ -106,7 +107,7 @@ async def _run_chat(task_id: str, session_id: str, user_message: str, mode: str)
             await _emit(task_id, event)
 
         # complete イベントが出たあと: 最終 assistant message を保存
-        thinking, answer = tanka.split_harmony(raw)
+        thinking, answer = llm.split_harmony(raw)
         db.append_message(session_id, {
             "kind": "assistant",
             "content": answer,
@@ -116,7 +117,7 @@ async def _run_chat(task_id: str, session_id: str, user_message: str, mode: str)
 
     except asyncio.CancelledError:
         # 中断時は途中経過を partial として保存
-        thinking, answer = tanka.split_harmony(raw)
+        thinking, answer = llm.split_harmony(raw)
         partial = (answer or "").strip()
         if partial:
             db.append_message(session_id, {

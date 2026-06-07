@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 
 import db
 import bus as q
-import tanka
+import llm
 import tasks
 
 logging.basicConfig(
@@ -137,8 +137,8 @@ def _sse_headers() -> dict[str, str]:
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
     out: dict[str, Any] = {
-        "lm_studio_url": tanka.LM_STUDIO_URL,
-        "configured_model": tanka.MODEL,
+        "lm_studio_url": llm.LM_STUDIO_URL,
+        "configured_model": llm.MODEL,
         "mongo_url": db.MONGO_URL,
         "mongo_db": db.MONGO_DB,
         "mongo_ok": db.ping(),
@@ -146,11 +146,11 @@ async def health() -> dict[str, Any]:
         "redis_ok": await q.ping(),
     }
     try:
-        models = tanka.client.models.list()
+        models = llm.client.models.list()
         ids = [m.id for m in models.data]
         out["lm_studio_ok"] = True
         out["available_models"] = ids
-        out["model_loaded"] = tanka.MODEL in ids
+        out["model_loaded"] = llm.MODEL in ids
     except Exception as e:
         log.warning("LM Studio health check failed: %s", e)
         out["lm_studio_ok"] = False

@@ -174,10 +174,10 @@ def test_season_consistent_violation():
     assert "season_consistent" in rules_fired(result)
 
 
-# ─── no_other_kigo (季違い) ───
+# ─── no_other_kigo (宣言外季語の厳格禁止) ───
 
 def test_no_other_kigo_cross_season():
-    # 宣言は夏 (蛍) だが、本文に紅葉 (秋) が混入
+    # 宣言は夏 (蛍) だが、本文に紅葉 (秋) が混入 → 季違い critical
     t = make_tanka(kigo="蛍", season="夏", lines=[
         ("蛍の火", "ほたるのひ"),
         ("紅葉の影に", "もみぢのかげに"),
@@ -186,7 +186,57 @@ def test_no_other_kigo_cross_season():
         ("遠き面影", "とほきおもかげ"),
     ])
     result = validator.evaluate(t)
-    assert "no_other_kigo_cross" in rules_fired(result)
+    fired = {v.rule for v in result.violations}
+    assert "no_other_kigo_cross" in fired
+    # critical なので 1 つで合格不能
+    cross = next(v for v in result.violations if v.rule == "no_other_kigo_cross")
+    assert cross.severity == "critical"
+
+
+def test_no_other_kigo_same_season_now_blocks():
+    # 宣言は春 (桜) だが本文に同季の別季語「梅」が混入 → 厳格化で critical、合格不能
+    t = make_tanka(kigo="桜", season="春", lines=[
+        ("桜咲く", "さくらさく"),
+        ("丘の向かうに", "おかのむかうに"),
+        ("梅も咲き", "うめもさき"),
+        ("春の日永し", "はるのひながし"),
+        ("風やはらかし", "かぜやはらかし"),
+    ])
+    result = validator.evaluate(t)
+    fired = {v.rule for v in result.violations}
+    assert "no_other_kigo_same" in fired
+    same = next(v for v in result.violations if v.rule == "no_other_kigo_same")
+    assert same.severity == "critical"
+    assert not result.passed  # 宣言外季語 1 つで合格を割る
+
+
+def test_bare_season_label_allowed():
+    # 宣言季と同じ季の裸の季節名 (春) はラベル扱いで違反にしない
+    t = make_tanka(kigo="桜", season="春", lines=[
+        ("春の野に", "はるののに"),
+        ("桜ひとひら", "さくらひとひら"),
+        ("舞ひ落ちて", "まひおちて"),
+        ("光あつめて", "ひかりあつめて"),
+        ("土に還りぬ", "つちにかへりぬ"),
+    ])
+    result = validator.evaluate(t)
+    fired = {v.rule for v in result.violations}
+    # 「春」はラベル、「桜」は宣言季語 → 宣言外季語なし
+    assert "no_other_kigo_same" not in fired
+    assert "no_other_kigo_cross" not in fired
+
+
+def test_cross_season_bare_label_still_flagged():
+    # 宣言は冬だが本文に「春」(別季の季節名) → 季違いとして検出する
+    t = make_tanka(kigo="雪", season="冬", lines=[
+        ("雪の朝", "ゆきのあさ"),
+        ("春を待ちつつ", "はるをまちつつ"),
+        ("身を縮め", "みをちぢめ"),
+        ("白き world に", "しろきせかいに"),
+        ("息白く立つ", "いきしろくたつ"),
+    ])
+    result = validator.evaluate(t)
+    assert "no_other_kigo_cross" in {v.rule for v in result.violations}
 
 
 # ─── mora_count: 3 段階 (Phase 1 B5b) ───
@@ -340,6 +390,71 @@ def test_format_critique_empty_when_clean():
         assert "違反は検出されませんでした" in validator.format_critique(result)
 
 
+# ─── Plan 抽出 (テキスト形式 + JSON 形式) ───
+
+def test_extract_from_json_plan():
+    # 8B が Plan を JSON で返すケース (実際に踏んだバグ): JSON からも抽出できる
+    plan = '{"kigo": "蝉時雨", "season": "夏", "image": "...夕暮れ。", "emotion": "郷愁"}'
+    assert validator.extract_season_from_plan(plan) == "夏"
+    assert validator.extract_kigo_from_plan(plan) == "蝉時雨"
+
+
+# ─── テーマ時間帯の整合 (theme_time_mismatch) ───
+
+def test_theme_time_dusk_vs_morning_flagged():
+    # お題「夏の夕暮れ」なのに朝の情景 → 矛盾 (朝と夕は 2 バンド離れている)
+    t = make_tanka(kigo="蛍", season="夏", lines=[
+        ("朝光さす", "あさひかりさす"),
+        ("川辺に蛍", "かわべにほたる"),
+        ("舞ひにけり", "まいにけり"),
+        ("風やはらかく", "かぜやわらかく"),
+        ("夢の名残り", "ゆめのなごり"),
+    ])
+    result = validator.evaluate(t, theme="夏の夕暮れ")
+    fired = {v.rule for v in result.violations}
+    assert "theme_time_mismatch" in fired
+    assert not result.passed  # critical なので合格不能
+
+
+def test_theme_time_dusk_with_dusk_ok():
+    # お題「夕暮れ」で夕の語を含む → OK
+    t = make_tanka(kigo="蛍", season="夏", lines=[
+        ("夕暮れに", "ゆうぐれに"),
+        ("川辺に蛍", "かわべにほたる"),
+        ("舞ひにけり", "まいにけり"),
+        ("風やはらかく", "かぜやわらかく"),
+        ("夢の名残り", "ゆめのなごり"),
+    ])
+    result = validator.evaluate(t, theme="夏の夕暮れ")
+    assert "theme_time_mismatch" not in {v.rule for v in result.violations}
+
+
+def test_theme_time_adjacent_ok():
+    # お題「夕暮れ」で夜の語 → 隣接 (夕→夜) なので自然な移ろい、許容
+    t = make_tanka(kigo="蛍", season="夏", lines=[
+        ("宵闇に", "よいやみに"),
+        ("川辺に蛍", "かわべにほたる"),
+        ("舞ひにけり", "まいにけり"),
+        ("風やはらかく", "かぜやわらかく"),
+        ("夢の名残り", "ゆめのなごり"),
+    ])
+    result = validator.evaluate(t, theme="夏の夕暮れ")
+    assert "theme_time_mismatch" not in {v.rule for v in result.violations}
+
+
+def test_theme_time_no_time_in_theme():
+    # お題に時刻指定がなければチェックしない
+    t = make_tanka(kigo="蛍", season="夏", lines=[
+        ("朝光さす", "あさひかりさす"),
+        ("川辺に蛍", "かわべにほたる"),
+        ("舞ひにけり", "まいにけり"),
+        ("風やはらかく", "かぜやわらかく"),
+        ("夢の名残り", "ゆめのなごり"),
+    ])
+    result = validator.evaluate(t, theme="蛍")
+    assert "theme_time_mismatch" not in {v.rule for v in result.violations}
+
+
 # ─── Plan 抽出 ───
 
 @pytest.mark.parametrize("text,expected", [
@@ -381,7 +496,7 @@ def test_every_rule_has_a_lesson():
         "kigo_present", "kigo_unique", "kigo_in_dictionary",
         "season_consistent", "no_other_kigo_cross", "no_other_kigo_same",
         "repeated_word", "kireji_absent",
-        "season_matches_plan", "kigo_matches_plan", "schema_invalid",
+        "season_matches_plan", "kigo_matches_plan", "theme_time_mismatch", "schema_invalid",
     }
     missing = rule_names - set(validator.LESSONS.keys())
     assert not missing, f"LESSONS に欠けているルール: {missing}"
