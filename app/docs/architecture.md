@@ -357,7 +357,7 @@ RULES (副作用なしの check 関数群)
    ├─ _rule_kigo_unique          major    -15  ちょうど 1 回か
    ├─ _rule_kigo_in_dictionary   minor    -5   歳時記辞書に登録あるか
    ├─ _rule_season_consistent    major    -20  宣言季 == 辞書記載季
-   ├─ _rule_no_other_kigo        major/minor -15/-5  他の季語混入 (季違いなら major)
+   ├─ _rule_no_other_kigo        critical -30/-25  宣言外季語の混入 (季違い/季重なり、両方禁止)
    └─ _rule_repeated_word        minor    -3   3+ 文字の重複表現
      │
      ▼
@@ -566,10 +566,11 @@ docker compose down -v          # ボリュームも削除 (DB データが消�
 | `TANKA_W_SEASON_CONSISTENT` | `20` | 宣言季と辞書記載季の不一致 (major) |
 | `TANKA_W_SEASON_MATCHES_PLAN` | `30` | Plan-output 季節不一致 (critical) |
 | `TANKA_W_KIGO_MATCHES_PLAN` | `20` | Plan-output 季語不一致 (major) |
-| `TANKA_W_NO_OTHER_KIGO_CROSS` | `15` | 季違いの混入 (major) |
-| `TANKA_W_NO_OTHER_KIGO_SAME` | `5` | 同季の他季語混入 (minor) |
+| `TANKA_W_NO_OTHER_KIGO_CROSS` | `30` | 宣言外季語(季違い)の混入 (critical)。1つで合格不能 |
+| `TANKA_W_NO_OTHER_KIGO_SAME` | `25` | 宣言外季語(同季/季重なり)の混入 (critical)。1つで合格不能 |
 | `TANKA_W_REPEATED_WORD` | `3` | 表現の重複 |
 | `TANKA_W_KIREJI_ABSENT` | `3` | 句切れ・体言止め両方なし (minor) — Phase 1 B5a+B5c |
+| `TANKA_W_THEME_TIME_MISMATCH` | `25` | お題の時刻(夕暮れ等)と短歌の矛盾 (critical) |
 
 ### ヘルスチェック
 

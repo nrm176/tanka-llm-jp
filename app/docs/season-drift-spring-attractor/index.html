@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>短歌生成の不具合分析 — セッション 6a24d988 / 季節ドリフト</title>
+<style>
+  :root{
+    --bg:#0f172a; --bg2:#1e293b; --panel:#16213a; --ink:#e8eefb; --muted:#9fb0cf;
+    --line:#2d3c5e; --accent:#7c9cff;
+    --spring:#ec6f9e; --summer:#28b487; --autumn:#e08a2b; --winter:#4f96f6;
+    --danger:#ef4444; --good:#22c55e; --warn:#eab308;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,system-ui,sans-serif;
+    overflow:hidden;
+  }
+  /* progress + counter */
+  #bar{position:fixed;top:0;left:0;height:4px;background:linear-gradient(90deg,var(--accent),var(--spring));z-index:50;transition:width .25s}
+  #counter{position:fixed;bottom:14px;right:18px;color:var(--muted);font-size:13px;letter-spacing:.05em;z-index:50}
+  #hint{position:fixed;bottom:14px;left:18px;color:var(--muted);font-size:12px;z-index:50;opacity:.7}
+  /* slides */
+  .slide{position:fixed;inset:0;display:none;flex-direction:column;justify-content:center;
+    padding:5vh 7vw;animation:fade .4s ease}
+  .slide.active{display:flex}
+  @keyframes fade{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  h1{font-size:clamp(28px,4.4vw,56px);line-height:1.18;margin:0 0 12px}
+  h2{font-size:clamp(22px,3vw,38px);margin:0 0 22px;line-height:1.2}
+  h2 .num{color:var(--accent);font-variant-numeric:tabular-nums}
+  .kicker{color:var(--accent);font-weight:700;letter-spacing:.16em;font-size:13px;text-transform:uppercase;margin-bottom:14px}
+  p,li{font-size:clamp(15px,1.55vw,20px);line-height:1.7;color:var(--ink)}
+  .muted{color:var(--muted)}
+  .sub{color:var(--muted);font-size:clamp(14px,1.4vw,18px)}
+  ul{margin:6px 0 0;padding-left:1.1em} li{margin:7px 0}
+  b,strong{color:#fff}
+  .tag{display:inline-block;padding:2px 10px;border-radius:999px;font-size:13px;font-weight:700;vertical-align:middle}
+  .t-spring{background:rgba(236,111,158,.18);color:var(--spring);border:1px solid var(--spring)}
+  .t-summer{background:rgba(40,180,135,.16);color:var(--summer);border:1px solid var(--summer)}
+  .t-autumn{background:rgba(224,138,43,.16);color:var(--autumn);border:1px solid var(--autumn)}
+  .t-winter{background:rgba(79,150,246,.16);color:var(--winter);border:1px solid var(--winter)}
+  .t-bad{background:rgba(239,68,68,.16);color:#fca5a5;border:1px solid var(--danger)}
+  .t-good{background:rgba(34,197,94,.16);color:#86efac;border:1px solid var(--good)}
+  .grid{display:grid;gap:22px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px 22px}
+  .card h3{margin:0 0 8px;font-size:clamp(15px,1.5vw,19px)}
+  .big{font-size:clamp(34px,6vw,72px);font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+  .flow{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  .chip{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:16px 20px;min-width:150px}
+  .chip .lbl{font-size:12px;color:var(--muted);letter-spacing:.1em;margin-bottom:6px}
+  .chip .val{font-size:clamp(18px,2vw,26px);font-weight:800}
+  .arrow{font-size:34px;color:var(--danger);font-weight:900}
+  .arrow.ok{color:var(--good)}
+  .poem{font-family:"Hiragino Mincho ProN","Yu Mincho",serif;line-height:1.9;font-size:clamp(16px,1.7vw,22px)}
+  table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:center;font-size:clamp(13px,1.4vw,18px)}
+  th{color:var(--muted);font-weight:600;background:rgba(255,255,255,.02)}
+  .cell-spring{background:rgba(236,111,158,.22);color:#ffd5e6;font-weight:800}
+  .cell-diag{background:rgba(34,197,94,.16);color:#bbf7d0;font-weight:700}
+  .cell-zero{color:#3b4a6b}
+  /* bar charts */
+  .bars{display:flex;align-items:flex-end;gap:18px;height:230px;padding-top:10px}
+  .barwrap{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
+  .bar{width:100%;border-radius:8px 8px 0 0;position:relative;transition:height .5s;min-height:3px}
+  .bar .v{position:absolute;top:-26px;left:0;right:0;text-align:center;font-weight:800;font-size:16px}
+  .blab{margin-top:10px;font-size:13px;color:var(--muted);text-align:center;line-height:1.3}
+  .passline{position:relative}
+  .passline::after{content:"合格 80";position:absolute;right:0;top:-9px;font-size:11px;color:var(--warn)}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:13px;color:var(--muted)}
+  .dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:middle}
+  .two{grid-template-columns:1fr 1fr}
+  .three{grid-template-columns:1fr 1fr 1fr}
+  .callout{border-left:4px solid var(--accent);padding:8px 16px;background:rgba(124,156,255,.08);border-radius:0 10px 10px 0;margin-top:14px}
+  .danger{border-left-color:var(--danger);background:rgba(239,68,68,.08)}
+  .good{border-left-color:var(--good);background:rgba(34,197,94,.08)}
+  .small{font-size:13px}
+  code{background:#0b1226;border:1px solid var(--line);border-radius:6px;padding:1px 7px;font-size:.92em;color:#cfe0ff}
+  .title-wrap{align-items:flex-start}
+  .pill-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+  @media(max-width:760px){.two,.three{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="bar"></div>
+<div id="counter"></div>
+<div id="hint">← → / クリックでスライド移動</div>
+
+<!-- 1 TITLE -->
+<section class="slide active title-wrap">
+  <div class="kicker">不具合分析レポート · 短歌生成パイプライン</div>
+  <h1>お題「夏の夕暮れ」が<br><span style="color:var(--spring)">春・桜の歌</span>に化けた</h1>
+  <p class="sub">セッション <code>6a24d988f64fc884b0ea2ba3</code> の問題点を、根本原因と横断的証拠まで掘り下げる</p>
+  <div class="pill-row">
+    <span class="tag t-bad">不合格 47点 が採用</span>
+    <span class="tag t-bad">Plan→Compose 季ドリフト</span>
+    <span class="tag t-bad">単発でなく系統的(37%)</span>
+    <span class="tag t-good">真因特定 → 対策実証済</span>
+  </div>
+  <p class="muted small" style="margin-top:26px">llm-jp-4-8b-thinking / FastAPI + 構造化 validator パイプライン</p>
+</section>
+
+<!-- 2 TL;DR -->
+<section class="slide">
+  <div class="kicker">結論 (30秒版)</div>
+  <h2>構想は<span class="tag t-summer">夏 / 蛍</span>を正しく選んだのに、出力は<span class="tag t-spring">春 / 花</span>に転落した</h2>
+  <div class="grid three">
+    <div class="card"><h3 class="muted">お題</h3><div class="big">夏の夕暮れ</div><p class="sub">時間帯＝夕暮れ</p></div>
+    <div class="card" style="border-color:var(--summer)"><h3 class="muted">構想 (Plan)</h3><div class="big" style="color:var(--summer)">夏 / 蛍</div><p class="sub">✓ お題に忠実</p></div>
+    <div class="card" style="border-color:var(--spring)"><h3 class="muted">出力 (最終)</h3><div class="big" style="color:var(--spring)">春 / 花</div><p class="sub">✗ お題も構想も裏切り</p></div>
+  </div>
+  <div class="callout danger">
+    validator は誤りを<b>検出した（スコア47, 合格は80）</b>。しかし refine ループは4回試しても直せず、
+    <b>不合格作がそのまま「完成」</b>としてユーザーに提示された。
+  </div>
+</section>
+
+<!-- 3 WHAT HAPPENED -->
+<section class="slide">
+  <div class="kicker">何が起きたか</div>
+  <h2>構想 → 出力 で季節と季語がすり替わった</h2>
+  <div class="flow" style="margin-bottom:18px">
+    <div class="chip" style="border-color:var(--summer)">
+      <div class="lbl">PLAN (構想)</div>
+      <div class="val" style="color:var(--summer)">季語=蛍 · 季節=夏</div>
+      <div class="sub small">川辺の水面に揺れる灯り…薄紅に染まる夕暮れ</div>
+    </div>
+    <div class="arrow">➜</div>
+    <div class="chip" style="border-color:var(--spring)">
+      <div class="lbl">OUTPUT (出力)</div>
+      <div class="val" style="color:var(--spring)">季語=花 · 季節=春</div>
+      <div class="sub small">桜の花が静かに散っていく様子</div>
+    </div>
+  </div>
+  <div class="card poem" style="border-color:var(--spring)">
+    花が散る ／ 水面灯り ／ 山の影 ／ 哀しさのみ ／ <span style="color:var(--spring)">自然の理かな</span>
+    <div class="sub small" style="margin-top:8px;font-family:system-ui">↑ 夕暮れ感も夏感も無い。4句目「哀しさのみ」は6拍（字足らず）。</div>
+  </div>
+</section>
+
+<!-- 4 TRAJECTORY -->
+<section class="slide">
+  <div class="kicker">4回の試行</div>
+  <h2>一度も合格せず、春の谷から出られなかった</h2>
+  <div class="card">
+    <div class="bars">
+      <div class="barwrap"><div class="bar" style="height:3%;background:#475569"><span class="v">0</span></div><div class="blab">試行0<br><span class="tag t-bad small">schema不正</span></div></div>
+      <div class="barwrap"><div class="bar" style="height:44%;background:var(--spring)"><span class="v">44</span></div><div class="blab">試行1<br>春/蛍 矛盾</div></div>
+      <div class="barwrap"><div class="bar" style="height:17%;background:var(--danger)"><span class="v">17</span></div><div class="blab">試行2<br>悪化(蛍残存)</div></div>
+      <div class="barwrap"><div class="bar passline" style="height:47%;background:var(--spring);border-top:2px dashed var(--warn)"><span class="v">47</span></div><div class="blab">試行3<br><span class="tag t-bad small">これを採用</span></div></div>
+    </div>
+    <p class="sub small" style="margin-top:14px">スコア推移 0 → 44 → 17 → 47（合格ライン80に未到達）。試行2でむしろ悪化。改善が単調でない best-of-N の典型的失敗。</p>
+  </div>
+  <div class="callout danger">終了理由は <code>max_refines_reached</code>。全試行が <span class="tag t-spring">春/花</span> から脱出できなかった。</div>
+</section>
+
+<!-- 5 PROBLEM 1 -->
+<section class="slide">
+  <div class="kicker">問題 ① · 重大</div>
+  <h2>Plan→Compose の季ドリフト（validatorは正しく検出）</h2>
+  <div class="grid two">
+    <div class="card">
+      <h3>各試行で発火した違反</h3>
+      <ul class="small">
+        <li>試行1: <code>season_matches_plan</code> −30 / <code>season_consistent</code> −20（春なのに蛍）</li>
+        <li>試行2: <code>no_other_kigo_cross</code> −30（本文に蛍残存）/ −30 / −20</li>
+        <li>試行3: <code>season_matches_plan</code> −30 / <code>kigo_matches_plan</code> −20</li>
+      </ul>
+    </div>
+    <div class="card good">
+      <h3>検出は機能している</h3>
+      <p>「構想の夏に戻せ」というガードは<b>毎回正しく発火</b>している。問題は検出ではなく
+      <b>モデルが従わないこと</b>（8Bの指示追従の弱さ）と、<b>矯正できないこと</b>。</p>
+    </div>
+  </div>
+  <div class="callout danger">検出 ≠ 矯正。critique を4回見せても春/花に固執した。</div>
+</section>
+
+<!-- 6 PROBLEM 2 ROOT -->
+<section class="slide">
+  <div class="kicker">問題 ② · 真因</div>
+  <h2>few-shot 例 #1（散る桜/春/花）への regression</h2>
+  <div class="grid two">
+    <div class="card" style="border-color:var(--spring)">
+      <h3>プロンプト先頭の few-shot #1</h3>
+      <p class="poem small">ひさかたの 光のどけき 春の日に しづ心なく <b>花の散るらむ</b></p>
+      <p class="sub small">emotion:「花の散り急ぐ様への憐れみと、<b style="color:var(--spring)">自然の理</b>への諦観」</p>
+    </div>
+    <div class="card" style="border-color:var(--spring)">
+      <h3>今回の出力（夏のお題なのに）</h3>
+      <p class="poem small">花が散る … 哀しさのみ <b style="color:var(--spring)">自然の理かな</b></p>
+      <p class="sub small">image:「桜の花が静かに散っていく」/ emotion:「儚く散る花への哀れみ」</p>
+    </div>
+  </div>
+  <div class="callout danger">
+    結句 <b>「自然の理かな」は #1 の emotion からの直接コピー</b>。image も emotion も #1 のほぼ言い換え。
+    モデルは構想（夏/蛍）を捨て、最も鮮烈で先頭にある<b>春の例に collapse</b> した。
+  </div>
+</section>
+
+<!-- 7 PROBLEM 3 RAG -->
+<section class="slide">
+  <div class="kicker">問題 ③ · 増幅要因</div>
+  <h2>RAG が「春」アンカーを注入していた</h2>
+  <p class="sub">季語「蛍」は古典コーパスに無く（exact 0件）、季節=夏 フォールバックで2首を注入。その1首が…</p>
+  <div class="card" style="border-color:var(--spring);margin-top:6px">
+    <p class="poem"><span style="color:var(--spring)">春過ぎて</span> 夏来にけらし 白妙の 衣ほすてふ 天の香具山 <span class="sub small">— 持統天皇</span></p>
+  </div>
+  <div class="callout danger">
+    「参考」として見せた歌の<b>冒頭が「春過ぎて」</b>。few-shot #1 と合わせ、<b>春の磁石がモデルの目前に2つ</b>あった。
+    RAG は春ドリフトを抑えるどころか<b>助長</b>した可能性が高い。
+  </div>
+</section>
+
+<!-- 8 PROBLEM 4 -->
+<section class="slide">
+  <div class="kicker">問題 ④</div>
+  <h2>refineが回復に失敗 ＋ 不合格を無警告で採用</h2>
+  <div class="grid two">
+    <div class="card">
+      <h3>回復の失敗</h3>
+      <p>4試行すべてが春/花の basin に留まった。スコアは乱高下（試行2で17へ悪化）。
+      best-of-N が<b>誤った attractor に捕捉</b>された。</p>
+    </div>
+    <div class="card">
+      <h3>不合格作の確定</h3>
+      <p>47点（&lt;80）の歌を最終結果として提示。fail-soft で best を返す設計だが、
+      <b>「規定未達」の警告ラベルが無い</b>。通常の完成短歌と区別がつかない。</p>
+    </div>
+  </div>
+  <div class="callout danger">ユーザーには「お題違反・季節違反・字足らず」の歌が、欠陥の表示なく確定した。</div>
+</section>
+
+<!-- 9 PROBLEM 5 -->
+<section class="slide">
+  <div class="kicker">問題 ⑤</div>
+  <h2>validator の検出ギャップ ＋ 永続化バグ</h2>
+  <div class="grid three">
+    <div class="card">
+      <h3>時刻の見逃し</h3>
+      <p class="small"><code>theme_time_mismatch</code> は<b>矛盾</b>しか見ない。出力に時刻語が無く「夕暮れ」を全く詠めていない＝<b>欠如</b>は検出対象外。</p>
+    </div>
+    <div class="card">
+      <h3>お題直接照合なし</h3>
+      <p class="small">お題遵守は plan 整合経由でしか効かない。<b>plan も春に流れていたら何も捕まえられない</b>構造欠陥。</p>
+    </div>
+    <div class="card danger" style="border:1px solid var(--danger)">
+      <h3>永続化バグ（コード）</h3>
+      <p class="small"><code>max_refines_reached</code> 分岐が <code>best_score</code> を保存しない（plateau 分岐は保存する）。事後分析を妨げた。</p>
+    </div>
+  </div>
+  <div class="callout">これらは「検出器側」の穴。真因（春の磁石）を断たない限り、検出を強化しても不合格作を量産するだけ。</div>
+</section>
+
+<!-- 10 CROSS-CUTTING -->
+<section class="slide">
+  <div class="kicker">これは単発ではない</div>
+  <h2>横断 52件: ドリフトは<span style="color:var(--spring)">100% 春</span>への一方通行</h2>
+  <div class="grid two" style="grid-template-columns:1.15fr .85fr">
+    <div class="card">
+      <table>
+        <tr><th>plan＼出力</th><th>春</th><th>夏</th><th>秋</th><th>冬</th></tr>
+        <tr><th>春</th><td class="cell-diag">10</td><td class="cell-zero">·</td><td class="cell-zero">·</td><td class="cell-zero">·</td></tr>
+        <tr><th>夏</th><td class="cell-spring">8</td><td class="cell-diag">10</td><td class="cell-zero">·</td><td class="cell-zero">·</td></tr>
+        <tr><th>秋</th><td class="cell-spring">4</td><td class="cell-zero">·</td><td class="cell-diag">6</td><td class="cell-zero">·</td></tr>
+        <tr><th>冬</th><td class="cell-spring">2</td><td class="cell-zero">·</td><td class="cell-zero">·</td><td class="cell-diag">6</td></tr>
+      </table>
+      <p class="sub small" style="margin-top:8px"><span class="dot" style="background:rgba(236,111,158,.6)"></span>春への転落&nbsp;&nbsp;<span class="dot" style="background:rgba(34,197,94,.5)"></span>正答（対角）</p>
+    </div>
+    <div class="grid" style="gap:14px">
+      <div class="card"><h3 class="muted">非春plan→春</h3><div class="big" style="color:var(--spring)">37%</div><p class="sub small">14/37件が春へ転落</p></div>
+      <div class="card"><h3 class="muted">春plan→春（定着）</h3><div class="big" style="color:var(--good)">100%</div><p class="sub small">春は出られない・吸い込む</p></div>
+      <div class="card"><h3 class="muted">夏/秋/冬への横滑り</h3><div class="big">0</div><p class="sub small">誤りは必ず春へ</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 11 FINGERPRINT -->
+<section class="slide">
+  <div class="kicker">真因の統合</div>
+  <h2>写し元は few-shot #1 だけ — 春アトラクター</h2>
+  <div class="grid two">
+    <div class="card">
+      <h3 class="muted">few-shot 指紋ヒット（全52件）</h3>
+      <div class="bars" style="height:180px">
+        <div class="barwrap"><div class="bar" style="height:100%;background:var(--spring)"><span class="v">4</span></div><div class="blab">#1 春<br>散る桜</div></div>
+        <div class="barwrap"><div class="bar" style="height:2%;background:var(--summer)"><span class="v">0</span></div><div class="blab">#2 夏</div></div>
+        <div class="barwrap"><div class="bar" style="height:2%;background:var(--autumn)"><span class="v">0</span></div><div class="blab">#3 秋</div></div>
+        <div class="barwrap"><div class="bar" style="height:2%;background:var(--winter)"><span class="v">0</span></div><div class="blab">#4 冬</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>なぜ「#1 だけ」が決定的か</h3>
+      <p>季節の合う例を横着して写すなら #2〜#4 にも痕跡が出るはず。<b>実際は #1 のみ</b>。
+      これは「季節に合う例を選ぶ」ではなく<b>例 #1 そのものへの固着</b>を意味する。</p>
+      <p class="sub small">緩く見れば「哀しみ＋花散る＋自然の理／受容」という #1 の情緒テンプレートが、夏でも秋でも冬でも貼り付けられている。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 12 FIX + PROOF -->
+<section class="slide">
+  <div class="kicker">対策と実証</div>
+  <h2>動的 few-shot: お題の季の例「だけ」を見せる</h2>
+  <div class="grid two">
+    <div class="card">
+      <h3>仕組み</h3>
+      <p>夏 plan のとき、従来は四季全部（春の散る桜も）を提示 → 春磁石が露出。
+      対策は<b>夏の例 1 ペアだけ</b>を見せ、他季の磁石を隠す。</p>
+      <p class="sub small">prompts.py に <code>select_few_shot()</code> 追加 / <code>TANKA_DYNAMIC_FEWSHOT</code> で A/B。pytest 69 passed。</p>
+    </div>
+    <div class="card good" id="ab-card">
+      <h3 class="muted">統制実験: 春への転落率（compose単離）</h3>
+      <div class="bars" style="height:170px">
+        <div class="barwrap"><div class="bar" id="ab-off" style="height:67%;background:var(--danger)"><span class="v" id="ab-off-v">67%</span></div><div class="blab">OFF<br>四季全部</div></div>
+        <div class="barwrap"><div class="bar" id="ab-on" style="height:2%;background:var(--good)"><span class="v" id="ab-on-v">0%</span></div><div class="blab">ON<br>動的</div></div>
+      </div>
+      <p class="sub small" id="ab-note">非春テーマ4件×3反復(計24・parse成功24/24)。OFF: <b>8/12が春へ転落</b> ／ ON: <b>0/12</b>。「夏の夕暮れ」は OFF 3/3→春 が ON 0/3 に。</p>
+    </div>
+  </div>
+  <div class="callout good" id="ab-concl">同一の plan・制約のもと、<b>few-shot を1ペアに絞るだけ</b>で春ドリフトが消えた。検出ではなく<b>原因（磁石）を断つ</b>対策。</div>
+</section>
+
+<!-- 13 SUMMARY -->
+<section class="slide">
+  <div class="kicker">まとめ · 帰属マップ</div>
+  <h2>どの層を直せば効くか</h2>
+  <div class="card">
+    <table>
+      <tr><th>層</th><th>問題</th><th>状態</th></tr>
+      <tr><td>モデル挙動</td><td>few-shot #1 への collapse（真因）</td><td><span class="tag t-good small">動的fewshotで対策・実証</span></td></tr>
+      <tr><td>RAG</td><td>春アンカー(「春過ぎて」)注入</td><td><span class="tag t-good small">測定済: ドリフト要因でない(legacy 0/9)</span></td></tr>
+      <tr><td>validator</td><td>時刻の欠如・お題直接照合なし</td><td><span class="tag t-bad small">未対応(positive rule案)</span></td></tr>
+      <tr><td>コード(バグ)</td><td><code>max_refines</code>でbest_score未保存</td><td><span class="tag t-bad small">要修正</span></td></tr>
+      <tr><td>運用</td><td>不合格作を無警告で採用</td><td><span class="tag t-bad small">UIに未達バッジ案</span></td></tr>
+    </table>
+  </div>
+  <div class="callout">最重要は<b>真因（春の磁石）</b>。これまでの修正は全て「検出」側だった。原因を断つ動的few-shotが本命で、残りは下流の保険。</div>
+  <p class="muted small" style="margin-top:18px">分析: セッション 6a24d988f64fc884b0ea2ba3 / 横断52件 / 統制実験24試行 ·
+  詳細は <code>app/docs/season-drift-spring-attractor/README.md</code></p>
+</section>
+
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  let i=slides.findIndex(s=>s.classList.contains('active')); if(i<0)i=0;
+  const bar=document.getElementById('bar'), counter=document.getElementById('counter');
+  function show(n){
+    i=Math.max(0,Math.min(slides.length-1,n));
+    slides.forEach((s,k)=>s.classList.toggle('active',k===i));
+    bar.style.width=((i+1)/slides.length*100)+'%';
+    counter.textContent=(i+1)+' / '+slides.length;
+  }
+  function next(){show(i+1)} function prev(){show(i-1)}
+  document.addEventListener('keydown',e=>{
+    if(['ArrowRight','ArrowDown',' ','PageDown'].includes(e.key)){e.preventDefault();next()}
+    else if(['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){e.preventDefault();prev()}
+    else if(e.key==='Home')show(0); else if(e.key==='End')show(slides.length-1);
+  });
+  document.addEventListener('click',e=>{ if(e.clientX < innerWidth*0.28) prev(); else next(); });
+  show(i);
+</script>
+</body>
+</html>

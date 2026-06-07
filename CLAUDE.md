@@ -94,19 +94,26 @@ open http://localhost:5178                    # フロント
 |---|---|---|
 | `app/backend/main.py` | FastAPI ルートのみ。**ロジックは書かない**。リクエスト検証 → 適切な層に委譲のみ | エンドポイント追加時 |
 | `app/backend/tasks.py` | asyncio Task の lifecycle (起動/cancel/cleanup)、SSE への event emit、長期失敗の記録 | 新タスク種別追加時 |
-| `app/backend/tanka.py` | LLM パイプライン本体 (Plan → Compose → Validate → Refine ループ) | パイプライン構造変更時 |
-| `app/backend/validator.py` | Pydantic `Tanka` + 9 ルール + スコアリング + critique 整形 + 長期記憶用 lesson 化 | ルール追加時 |
+| `app/backend/tanka.py` | パイプラインの**オーケストレーション**のみ (Plan→Compose→Validate→Refine の流れ)。293 行 | パイプライン構造変更時 |
+| `app/backend/llm.py` | LM Studio 通信 (client/timeout/stream_completion/split_harmony/is_context_error) | LLM 層変更時 |
+| `app/backend/prompts.py` | system プロンプト・few-shot・メッセージ組み立て (純関数) | プロンプト調整時 |
+| `app/backend/reading.py` | 読み・拍数 (kanji_to_hira/count_moras)。葉モジュール、依存なし | ほぼ触らない |
+| `app/backend/config.py` | TANKA_* env 設定の集約 (timeout/plateau/self-critique) | 設定追加時 |
+| `app/backend/validator.py` | Pydantic `Tanka` + ルール + スコアリング + critique 整形 + 長期記憶用 lesson 化 | ルール追加時 |
 | `app/backend/rag.py` | 古典短歌コーパスからの構造的検索 (季語/季節 match)。compose に作例注入 | コーパス/検索変更時 |
 | `app/backend/db.py` | MongoDB CRUD のみ (副作用唯一の境界) | スキーマ変更時 |
 | `app/backend/bus.py` | Redis Streams 操作のみ (XADD/XREAD/EXPIRE) | ブローカ層変更時 |
 | `app/backend/data/kigo.json` | 226 季語 × 5 季のキュレーション | 季語追加時 |
 | `app/backend/data/classical_tanka.json` | RAG 用の古典名歌 31 首 (古今集/新古今集等、PD) | 作例追加時 |
 
-**重要な依存方向**:
+**重要な依存方向** (リファクタで整理済み、一方向):
 
-- `tanka.py` は `db` / `validator` / `rag` を遅延 import する (循環参照回避)
-- `validator.py` は `tanka` の helpers (kanji_to_hira, count_moras) を import する
-- `db.py` / `bus.py` / `rag.py` はどこにも依存しない (最下層、副作用なし)
+- 葉モジュール (依存なし): `reading.py` / `config.py` / `prompts.py` / `db.py` / `bus.py`
+- `llm.py` → `config`
+- `validator.py` → `reading` (旧: tanka への逆依存があったが解消)
+- `rag.py` → 依存なし (data 読むだけ)
+- `tanka.py` → `llm` / `prompts` / `config` / `reading` + `db`/`validator`/`rag` を遅延 import (循環回避)
+- `main.py` → `llm`/`db`/`bus`/`tasks`、`tasks.py` → `llm`/`tanka`/`db`/`bus`
 
 **RAG (Phase 3)**: `rag.retrieve(season, kigo)` が季語 exact → 同季 → 雑 の優先で
 古典作例を返し、`tanka.py` の compose プロンプトに「参考」として注入する (`TANKA_RAG=1` で
@@ -151,7 +158,13 @@ open http://localhost:5178                    # フロント
 - **Plan で決めた季節/季語を Compose で勝手に変える**現象がよく起きる
 - 対策: `season_matches_plan` (-30) / `kigo_matches_plan` (-20) を validator に
 - 加えて Compose プロンプトで `【重要・必須】season は "夏" / kigo は "蝉"` と動的注入
-- Few-shot は **四季全部** 揃える (春・夏・秋・冬)。一つでも欠けるとそこに regress する
+- **【更新 2026-06】「Few-shot は四季全部揃える」は誤りだった**。横断 52 件の分析で、四季を全部
+  見せても **非春 plan の 37% が春 (#1=散る桜) へ regress / 写し元は #1 のみ (#2-4 は 0 件) /
+  ドリフトは 100% 春への一方通行** と判明 (= 春アトラクター)。四季を並べても、先頭で最も鮮烈な #1 が磁石になる
+- 対策: **動的 few-shot** = plan の季に一致する例を **1 ペアだけ** compose に見せ、他季 (特に春) の磁石を隠す
+  (`prompts.select_few_shot` / `config.DYNAMIC_FEWSHOT` 既定 ON / env `TANKA_DYNAMIC_FEWSHOT`)。
+  統制実験: 「夏の夕暮れ」の春転落が OFF 3/3 → ON 0/3、全体 OFF 8/12(67%) → ON 0/12(0%)。
+  詳細は `app/docs/season-drift-spring-attractor/`。**四季全部を常時見せる実装に戻さないこと** (regression の原因)
 
 ### 6.5 React コンポーネントの null 安全
 - `TankaCompleteBlock` で `tanka.split('\n')` が null で crash した過去あり
