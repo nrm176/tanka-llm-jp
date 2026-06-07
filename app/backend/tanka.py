@@ -250,7 +250,7 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None
 
         cap = max_refines if max_refines is not None else config.HARD_CAP
         if attempt >= cap:
-            yield {"type": "max_refines_reached", "best_score": best_score}
+            yield {"type": "max_refines_reached", "best_score": best_score, "history": score_history}
             final_obj = best_obj if best_obj else r["tanka_obj"]
             final_score = best_score if best_obj else score
             break

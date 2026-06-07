@@ -137,6 +137,47 @@ async def _run_chat(task_id: str, session_id: str, user_message: str, mode: str)
 
 # ─── tanka タスク ───
 
+def apply_event_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
+    """パイプラインイベントを final_state に反映する純粋な reducer (副作用なし)。
+
+    DB 記録 (record_failure) や SSE 送信は副作用なので呼び出し側 (_run_tanka) が行う。
+    終了系イベント (complete / max_refines_reached / plateau_reached) は best_score 等の
+    永続化に直結するため、ここで漏れなく state へ落とす。**plateau と max_refines は対称に扱う**
+    (過去、max_refines 経路だけ best_score/score_history を捨てており事後分析を妨げた)。"""
+    etype = event.get("type")
+    if etype == "rag":
+        state["rag_examples"] = event.get("examples", [])
+    elif etype == "complete":
+        state["plan"] = event.get("plan")
+        state["tanka"] = event.get("tanka")
+        state["moras"] = event.get("moras", [])
+        state["kigo"] = event.get("kigo")
+        state["season"] = event.get("season")
+        state["image"] = event.get("image")
+        state["emotion"] = event.get("emotion")
+        state["final_score"] = event.get("score")
+    elif etype == "validation":
+        state["validations"].append({
+            "attempt": event.get("attempt"),
+            "score": event.get("score"),
+            "errors": event.get("errors", []),
+            "warnings": event.get("warnings", []),
+            "violations": event.get("violations", []),
+            "resolved": event.get("resolved", False),
+        })
+    elif etype == "max_refines_reached":
+        state["max_refines_reached"] = True
+        state["best_score"] = event.get("best_score")
+        state["score_history"] = event.get("history", [])
+    elif etype == "plateau_reached":
+        state["plateau_reached"] = True
+        state["best_score"] = event.get("best_score")
+        state["score_history"] = event.get("history", [])
+    elif etype == "llm_error":
+        state["llm_error"] = event.get("message")
+        state["llm_error_recovered"] = event.get("recovered", False)
+
+
 async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int) -> None:
     """tanka:お題 のユーザーメッセージは既に DB に書かれている前提。
     パイプライン実行 → 完成短歌を DB に保存。"""
@@ -149,6 +190,9 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
         "moras": [],
         "validations": [],
         "max_refines_reached": False,
+        "plateau_reached": False,
+        "best_score": None,
+        "score_history": [],
         # validator 由来の構造化フィールド
         "kigo": None,
         "season": None,
@@ -160,51 +204,23 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
     try:
         async for event in tanka.generate_tanka_pipeline(theme, max_refines=max_refines):
             etype = event.get("type")
-            if etype == "rag":
-                final_state["rag_examples"] = event.get("examples", [])
-            elif etype == "complete":
-                final_state["plan"] = event.get("plan")
-                final_state["tanka"] = event.get("tanka")
-                final_state["moras"] = event.get("moras", [])
-                final_state["kigo"] = event.get("kigo")
-                final_state["season"] = event.get("season")
-                final_state["image"] = event.get("image")
-                final_state["emotion"] = event.get("emotion")
-                final_state["final_score"] = event.get("score")
-            elif etype == "validation":
-                final_state["validations"].append({
-                    "attempt": event.get("attempt"),
-                    "score": event.get("score"),
-                    "errors": event.get("errors", []),
-                    "warnings": event.get("warnings", []),
-                    "violations": event.get("violations", []),
-                    "resolved": event.get("resolved", False),
-                })
-                # 長期失敗記憶への記録 (resolved == False の attempt のみ)
-                if not event.get("resolved"):
-                    try:
-                        db.record_failure(
-                            task_id=task_id,
-                            session_id=session_id,
-                            theme=theme,
-                            attempt=event.get("attempt", 0),
-                            raw_output=event.get("raw_output", ""),
-                            parsed=event.get("parsed_tanka"),
-                            score=event.get("score", 0),
-                            violations=event.get("violations", []),
-                        )
-                    except Exception as e:
-                        log.warning("record_failure failed: %s", e)
-            elif etype == "max_refines_reached":
-                final_state["max_refines_reached"] = True
-            elif etype == "plateau_reached":
-                final_state["plateau_reached"] = True
-                final_state["best_score"] = event.get("best_score")
-                final_state["score_history"] = event.get("history", [])
-            elif etype == "llm_error":
-                # コンテキスト超過等で refine 続行不能 → best-so-far にフォールバック済み。
-                final_state["llm_error"] = event.get("message")
-                final_state["llm_error_recovered"] = event.get("recovered", False)
+            apply_event_to_state(final_state, event)
+
+            # 長期失敗記憶への記録 (resolved == False の validation のみ。副作用なので reducer の外)
+            if etype == "validation" and not event.get("resolved"):
+                try:
+                    db.record_failure(
+                        task_id=task_id,
+                        session_id=session_id,
+                        theme=theme,
+                        attempt=event.get("attempt", 0),
+                        raw_output=event.get("raw_output", ""),
+                        parsed=event.get("parsed_tanka"),
+                        score=event.get("score", 0),
+                        violations=event.get("violations", []),
+                    )
+                except Exception as e:
+                    log.warning("record_failure failed: %s", e)
 
             # フロント送信時は内部用フィールドを落とす (raw_output は重い)
             if etype == "validation":
