@@ -51,3 +51,11 @@ SELF_CRITIQUE_ENABLED = env_bool("TANKA_SELF_CRITIQUE", True)
 # 磁石を隠す。横断分析で「四季を全部見せても非春 plan の 37% が春へ regress、写し元は #1 のみ
 # (#2-4 は 0 件)」が判明したため既定 ON。A/B は TANKA_DYNAMIC_FEWSHOT=0 で従来 (四季全部) に戻す。
 DYNAMIC_FEWSHOT = env_bool("TANKA_DYNAMIC_FEWSHOT", True)
+
+# 生成フェーズ (plan/compose/self_critique/refine) の completion token 上限 (#22)。
+# thinking モデルの自己検証暴走 (拍数再計算・存在しない空白の検証ループ) を打ち切り、
+# context 圧迫 (§6.10) と latency を抑える。打ち切られた出力は harmony final マーカーを
+# 持たないため schema_invalid → 既存の refine / best-so-far が fail-clean に回収する。
+# 既定 4096 は実測分布 (phase raw: p50=387 / p90≈10k / p95≈20k chars, 20k は保存 cap) から
+# 「正常系 p90 を残し censored tail (暴走) を切る」位置。0 で無効。
+MAX_COMPLETION_TOKENS = env_int("TANKA_MAX_COMPLETION_TOKENS", 4096)

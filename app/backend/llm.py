@@ -95,14 +95,19 @@ def is_context_error(exc: Exception) -> bool:
 
 
 async def stream_completion(messages: list[dict], temperature: float = 0.3,
-                            model: str | None = None) -> AsyncIterator[str]:
+                            model: str | None = None,
+                            max_tokens: int | None = None) -> AsyncIterator[str]:
     """LM Studio に投げて生のテキスト delta を yield する (async)。
-    model 省略時は現在のモデル (get_model())。長いタスクは開始時にスナップショットを渡すこと。"""
+    model 省略時は現在のモデル (get_model())。長いタスクは開始時にスナップショットを渡すこと。
+    max_tokens を指定すると completion を打ち切る (#22 thinking 暴走対策)。
+    打ち切りは例外ではなく正常終了 (finish_reason=length) なので呼び出し側の特別処理は不要。"""
+    extra: dict = {"max_tokens": max_tokens} if max_tokens else {}
     stream = await async_client.chat.completions.create(
         model=model or _current_model,
         messages=messages,
         temperature=temperature,
         stream=True,
+        **extra,
     )
     async for chunk in stream:
         delta = chunk.choices[0].delta.content or ""
