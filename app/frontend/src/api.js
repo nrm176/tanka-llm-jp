@@ -147,6 +147,14 @@ export async function listEvalRuns() {
   return res.json()
 }
 
+// ─── Tanka Gallery (全セッション横断の短歌一覧) ───
+
+export async function listTankaRecords(limit = 500) {
+  const res = await fetch(`/api/tanka/records?limit=${limit}`)
+  if (!res.ok) throw new Error(`listTankaRecords HTTP ${res.status}`)
+  return res.json()
+}
+
 // ─── Failures (長期失敗記憶) ───
 
 export async function listFailures(limit = 50) {
