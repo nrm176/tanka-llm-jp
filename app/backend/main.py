@@ -13,6 +13,9 @@
 - POST   /api/tanka                短歌タスク作成 → {task_id}
 - GET    /api/tasks/{tid}/stream   SSE: タスクのイベントストリーム (replay+ライブ)
 - POST   /api/tasks/{tid}/cancel   実行中タスクのキャンセル
+
+- GET    /api/models               {current, available[]} (LM Studio から、embedding 除外)
+- POST   /api/model                生成モデルの runtime 切替 (新規タスクから有効、mongo に永続化)
 """
 
 from __future__ import annotations
@@ -55,6 +58,17 @@ async def lifespan(app: FastAPI):
     n = db.fail_orphaned_tasks()
     if n > 0:
         log.info("marked %d orphaned tasks as failed on startup", n)
+
+    # 永続化されたモデル設定を復元 (precedence: db settings > env LM_STUDIO_MODEL > 既定)。
+    # 併せて #15 以前の failure レコードに model を backfill (env 既定モデル産が真)。
+    try:
+        db.backfill_failure_model(llm.DEFAULT_MODEL)
+        saved_model = db.get_setting("model")
+        if saved_model and saved_model != llm.get_model():
+            llm.set_model(saved_model)
+            log.info("restored model from settings: %s", saved_model)
+    except Exception as e:
+        log.warning("model setting restore failed (using default %s): %s", llm.DEFAULT_MODEL, e)
 
     yield
 
@@ -118,6 +132,10 @@ class UpdateTitleRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=120)
 
 
+class ModelSwitchRequest(BaseModel):
+    model: str = Field(..., min_length=1, max_length=200)
+
+
 # ─── SSE helpers ───
 
 def _format_sse(event: dict[str, Any]) -> str:
@@ -138,7 +156,8 @@ def _sse_headers() -> dict[str, str]:
 async def health() -> dict[str, Any]:
     out: dict[str, Any] = {
         "lm_studio_url": llm.LM_STUDIO_URL,
-        "configured_model": llm.MODEL,
+        "configured_model": llm.get_model(),
+        "default_model": llm.DEFAULT_MODEL,
         "mongo_url": db.MONGO_URL,
         "mongo_db": db.MONGO_DB,
         "mongo_ok": db.ping(),
@@ -146,11 +165,10 @@ async def health() -> dict[str, Any]:
         "redis_ok": await q.ping(),
     }
     try:
-        models = llm.client.models.list()
-        ids = [m.id for m in models.data]
+        ids = llm.list_available_models()
         out["lm_studio_ok"] = True
         out["available_models"] = ids
-        out["model_loaded"] = llm.MODEL in ids
+        out["model_loaded"] = llm.get_model() in ids
     except Exception as e:
         log.warning("LM Studio health check failed: %s", e)
         out["lm_studio_ok"] = False
@@ -158,6 +176,48 @@ async def health() -> dict[str, Any]:
 
     out["status"] = "ok" if (out["mongo_ok"] and out["redis_ok"] and out.get("lm_studio_ok")) else "degraded"
     return out
+
+
+# ─── Model selection (#15) ───
+
+@app.get("/api/models")
+async def get_models() -> dict[str, Any]:
+    """切替可能なモデル一覧。LM Studio のダウンロード済みモデルから embedding 系を除外して返す。
+    注意: LM Studio の /v1/models は「ダウンロード済み」であって「ロード済み」ではない。
+    未ロードモデルへ切替えた場合、初回生成は JIT ロードで遅くなる (既定 context が小さい点にも注意)。"""
+    try:
+        ids = llm.list_available_models()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LM Studio unreachable: {e}")
+    return {
+        "current": llm.get_model(),
+        "default": llm.DEFAULT_MODEL,
+        "available": [i for i in ids if llm.is_chat_model(i)],
+    }
+
+
+@app.post("/api/model")
+async def post_model(req: ModelSwitchRequest) -> dict[str, Any]:
+    """生成モデルを runtime 切替する。実行中タスクは開始時のモデルで走り切り、新規タスクから有効。
+    mongo settings に永続化され、再起動後も維持される (env より優先)。"""
+    try:
+        ids = llm.list_available_models()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LM Studio unreachable: {e}")
+    if req.model not in ids:
+        raise HTTPException(status_code=400, detail=f"model not available in LM Studio: {req.model}")
+    if not llm.is_chat_model(req.model):
+        raise HTTPException(status_code=400, detail=f"not a chat model: {req.model}")
+
+    previous = llm.get_model()
+    llm.set_model(req.model)
+    try:
+        db.set_setting("model", req.model)
+    except Exception as e:
+        # 永続化失敗でも runtime 切替自体は有効のまま (再起動で戻る)。degraded を明示する
+        log.warning("model setting persistence failed: %s", e)
+        return {"current": req.model, "previous": previous, "persisted": False}
+    return {"current": req.model, "previous": previous, "persisted": True}
 
 
 # ─── Sessions CRUD ───

@@ -156,6 +156,7 @@ def apply_event_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
         state["image"] = event.get("image")
         state["emotion"] = event.get("emotion")
         state["final_score"] = event.get("score")
+        state["model"] = event.get("model")
     elif etype == "validation":
         state["validations"].append({
             "attempt": event.get("attempt"),
@@ -199,6 +200,7 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
         "image": None,
         "emotion": None,
         "final_score": None,
+        "model": None,       # 生成に使ったモデル (#15)
         "rag_examples": [],  # RAG で参照した古典作例
     }
     try:
@@ -218,6 +220,7 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
                         parsed=event.get("parsed_tanka"),
                         score=event.get("score", 0),
                         violations=event.get("violations", []),
+                        model=event.get("model"),
                     )
                 except Exception as e:
                     log.warning("record_failure failed: %s", e)

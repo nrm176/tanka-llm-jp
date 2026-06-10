@@ -161,6 +161,27 @@ export async function clearFailures() {
   return res.json()
 }
 
+// ─── Model selection (#15) ───
+
+export async function listModels() {
+  const res = await fetch('/api/models')
+  if (!res.ok) throw new Error(`listModels HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function switchModel(model) {
+  const res = await fetch('/api/model', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.detail || `switchModel HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
 // ─── Health ───
 
 export async function checkHealth() {
