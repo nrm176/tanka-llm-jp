@@ -49,7 +49,9 @@ async def _run_llm_phase(phase: str, messages: list[dict], *, attempt: int | Non
     extra = {"attempt": attempt} if attempt is not None else {}
     yield {"type": "phase_start", "phase": phase, **extra}
     raw = ""
-    async for delta in llm.stream_completion(messages, model=model):
+    # completion 上限 (#22): 暴走思考の打ち切り。0/None なら無制限 (従来挙動)
+    async for delta in llm.stream_completion(
+            messages, model=model, max_tokens=config.MAX_COMPLETION_TOKENS or None):
         raw += delta
         yield {"type": "chunk", "phase": phase, "text": delta, **extra}
     _, text = llm.split_harmony(raw)
