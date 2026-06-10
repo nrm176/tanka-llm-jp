@@ -663,6 +663,18 @@ main {
 }
 .tanka-score.pass { color: #1f6f2e; font-weight: 600; }
 .tanka-score.fail { color: #8a2828; font-weight: 600; }
+.tanka-complete.unmet { border-left-color: #c0392b; }
+.tanka-unmet-badge {
+  align-self: flex-start;
+  padding: 4px 12px;
+  background: #fdecec;
+  border: 1px solid #e0a8a8;
+  border-radius: 999px;
+  color: #8a2828;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
 .tanka-meta-detail {
   font-size: 13px;
   color: #555;

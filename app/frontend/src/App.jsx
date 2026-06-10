@@ -136,11 +136,24 @@ function ValidationBlock({ validation }) {
   )
 }
 
+// バックエンドの validator.PASS_THRESHOLD (env TANKA_PASS_THRESHOLD, 既定 80) に対応。
+// これ未満のスコアは「合格に達していない暫定案」を意味する。
+const PASS_THRESHOLD = 80
+
 function TankaCompleteBlock({ tanka, moras, plan, kigo, season, image, emotion, score }) {
   if (!tanka) return null
   const lines = String(tanka).split('\n')
+  const unmet = typeof score === 'number' && score < PASS_THRESHOLD
   return (
-    <div className="tanka-complete">
+    <div className={'tanka-complete' + (unmet ? ' unmet' : '')}>
+      {unmet && (
+        <div
+          className="tanka-unmet-badge"
+          title={`合格は ${PASS_THRESHOLD} 点以上です。これは規定を満たさない暫定案 (best-of-N の最高得点案) として表示しています。`}
+        >
+          ⚠ 規定未達（{score}/100・合格 {PASS_THRESHOLD}）
+        </div>
+      )}
       <div className="tanka-final">
         {lines.map((line, i) => <div key={i}>{line || ' '}</div>)}
       </div>
@@ -151,7 +164,7 @@ function TankaCompleteBlock({ tanka, moras, plan, kigo, season, image, emotion, 
         {kigo && <span className="tanka-meta-item">季語: <b>{kigo}</b></span>}
         {season && <span className="tanka-meta-item">季節: {season}</span>}
         {typeof score === 'number' && (
-          <span className={'tanka-meta-item tanka-score' + (score >= 80 ? ' pass' : ' fail')}>
+          <span className={'tanka-meta-item tanka-score' + (score >= PASS_THRESHOLD ? ' pass' : ' fail')}>
             評点: {score}/100
           </span>
         )}
