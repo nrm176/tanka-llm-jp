@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { marked } from 'marked'
 import EvalMonitor from './EvalMonitor.jsx'
+import TankaGallery from './TankaGallery.jsx'
 import {
   cancelTask,
   checkHealth,
@@ -437,11 +438,14 @@ function AppInner() {
   const [health, setHealth] = useState({ status: 'checking' })
   const [error, setError] = useState(null)
   const [showFailures, setShowFailures] = useState(false)
-  const [view, setView] = useState('chat') // 'chat' | 'eval'
+  const [view, setView] = useState('chat') // 'chat' | 'gallery' | 'eval'
 
   const abortRef = useRef(null)
   const scrollRef = useRef(null)
   const textareaRef = useRef(null)
+  // 短歌一覧からのジャンプ先 ({sessionId, index} | null)。セッション読込後の
+  // オートスクロールを「最下部」ではなく該当メッセージへ向ける 1 回限りの指示。
+  const pendingScrollRef = useRef(null)
 
   // クロージャ越しに「最新の」activeId / streaming を読むための ref
   // ストリーム中にユーザーがセッション切替したことを検知して、
@@ -691,7 +695,22 @@ function AppInner() {
   }, [input])
   useEffect(() => {
     const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    // 短歌一覧からのジャンプ: 全メッセージ種が main 直下の .msg なので、
+    // messages 配列の添字と ':scope > .msg' の位置が 1:1 対応する
+    const pending = pendingScrollRef.current
+    if (pending && pending.sessionId === activeIdRef.current) {
+      pendingScrollRef.current = null
+      const node = el.querySelectorAll(':scope > .msg')[pending.index]
+      if (node) {
+        node.scrollIntoView({ block: 'start' })
+        node.classList.add('msg-jump-flash')
+        setTimeout(() => node.classList.remove('msg-jump-flash'), 2000)
+        return
+      }
+      // 見つからなければ従来どおり最下部へフォールバック
+    }
+    el.scrollTop = el.scrollHeight
   }, [messages])
 
   // 他セッションで task が走っている間だけサイドバーを軽く poll してインジケータを最新化
@@ -810,6 +829,17 @@ function AppInner() {
     }
   }, [refreshSessions, loadSession])
 
+  // 短歌一覧のカードから元の会話セッションの該当メッセージへジャンプする。
+  // sessionId も持つのは、読込完了前に別セッションへ切り替えた場合に
+  // 古い index で誤スクロールしないための保険 (effect 側で照合)。
+  const openSessionFromGallery = useCallback(async (id, messageIndex) => {
+    pendingScrollRef.current = Number.isInteger(messageIndex)
+      ? { sessionId: id, index: messageIndex }
+      : null
+    setView('chat')
+    await loadSession(id)
+  }, [loadSession])
+
   const handleDeleteSession = useCallback(async (id) => {
     if (!confirm('このセッションを削除しますか？（実行中のタスクもキャンセルされます）')) return
     try {
@@ -861,6 +891,10 @@ function AppInner() {
               onClick={() => setView('chat')}
             >チャット</button>
             <button
+              className={'view-tab' + (view === 'gallery' ? ' active' : '')}
+              onClick={() => setView('gallery')}
+            >短歌一覧</button>
+            <button
               className={'view-tab' + (view === 'eval' ? ' active' : '')}
               onClick={() => setView('eval')}
             >評価モニタ</button>
@@ -884,6 +918,8 @@ function AppInner() {
         {showFailures && <FailuresPanel onClose={() => setShowFailures(false)} />}
 
         {view === 'eval' && <EvalMonitor />}
+
+        {view === 'gallery' && <TankaGallery onOpenSession={openSessionFromGallery} />}
 
         {view === 'chat' && (
         <>

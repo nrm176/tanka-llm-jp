@@ -414,6 +414,73 @@ def _aggregate_tanka_metrics(tanka_msgs: list[dict]) -> dict[str, Any]:
     }
 
 
+# ─── 短歌一覧 (Tanka Gallery) ───
+# 全セッションの kind=="tanka" メッセージをフラットな閲覧用レコードへ変換する。
+# compute_metrics と同じく個人利用スケール (数百セッション) 前提の素朴な全件走査で十分。
+
+def tanka_record_from_message(
+    session_id: str, session_title: str, msg: dict, message_index: int
+) -> dict | None:
+    """tanka メッセージ 1 件を一覧表示用のフラットなレコードへ変換する純関数。
+
+    message_index はセッション内 messages 配列の添字。フロントが「会話を開く」で
+    該当メッセージへスクロールするのに使う (メッセージは append-only なので安定)。
+
+    本文 (tanka) を持たないメッセージは閲覧対象ではないので None を返す
+    (complete 前に失敗したタスクは保存されないが、古いデータへの防御)。"""
+    if msg.get("kind") != "tanka" or not msg.get("tanka"):
+        return None
+    created = msg.get("created_at")
+    if isinstance(created, datetime):
+        # Mongo は naive UTC を返す。UTC を明示しないとフロントの new Date() が
+        # ローカル時刻として解釈し、表示が +09:00 ずれる
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        created = created.isoformat()
+    score = msg.get("final_score")
+    return {
+        "session_id": session_id,
+        "session_title": session_title,
+        "message_index": message_index,
+        "theme": msg.get("theme"),
+        "tanka": msg.get("tanka"),
+        "kigo": msg.get("kigo"),
+        "season": msg.get("season"),
+        "moras": msg.get("moras") or [],
+        "image": msg.get("image"),
+        "emotion": msg.get("emotion"),
+        "score": score if isinstance(score, int) else None,
+        "attempts": len(msg.get("validations") or []),
+        "plateau_reached": bool(msg.get("plateau_reached")),
+        "max_refines_reached": bool(msg.get("max_refines_reached")),
+        "created_at": created,
+    }
+
+
+def iter_tanka_records(session_id: str, session_title: str, messages: list[dict]):
+    """セッションのメッセージ列から短歌レコードを生成する純関数。
+
+    message_index には tanka の連番ではなく **messages 配列の添字** が入る
+    (user メッセージ等を含めた位置。フロントの DOM 位置決めと 1:1 対応)。"""
+    for i, m in enumerate(messages):
+        rec = tanka_record_from_message(session_id, session_title, m, i)
+        if rec:
+            yield rec
+
+
+def list_tanka_records() -> list[dict]:
+    """全セッション横断の短歌レコードを新しい順に全件返す。「短歌一覧」ビュー用。
+    件数制限 (とトータル件数の報告) は呼び出し側 (main.py) が行う。"""
+    records: list[dict] = []
+    for sess in _sessions().find({}, projection={"title": 1, "messages": 1}):
+        records.extend(
+            iter_tanka_records(str(sess["_id"]), sess.get("title") or "", sess.get("messages", []))
+        )
+    # created_at は UTC isoformat 文字列なので辞書順 = 時系列順 (None は末尾へ)
+    records.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return records
+
+
 # ─── Eval Monitor (Phase 2 UI): eval/repeat セッションの一覧と進捗サマリ ───
 # eval.sh は title="[eval] <variant> <ts>"、eval-repeat.sh は title="[repeat N] <slug>" で
 # セッションを作る。それらを拾って、テーマ別スコア・進捗・実行中テーマを返す。

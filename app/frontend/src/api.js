@@ -147,6 +147,14 @@ export async function listEvalRuns() {
   return res.json()
 }
 
+// ─── Tanka Gallery (全セッション横断の短歌一覧) ───
+
+export async function listTankaRecords(limit = 500) {
+  const res = await fetch(`/api/tanka/records?limit=${limit}`)
+  if (!res.ok) throw new Error(`listTankaRecords HTTP ${res.status}`)
+  return res.json()
+}
+
 // ─── Failures (長期失敗記憶) ───
 
 export async function listFailures(limit = 50) {
@@ -181,7 +189,15 @@ export function normalizeMessage(msg) {
     return {
       kind: 'tanka',
       theme: msg.theme,
-      phases: [],            // 過去の生成過程は再生しない (live のみ)
+      // 永続化された生成過程 (phase 毎の thinking 込み raw) を復元。
+      // raw を PhaseBlock が splitHarmony してライブ時と同じ表示になる。
+      // 古いメッセージ (phases 未保存) は [] のまま。
+      phases: (msg.phases || []).map((p) => ({
+        phase: p.phase,
+        attempt: p.attempt,
+        raw: p.raw || '',
+        complete: true,
+      })),
       validations: msg.validations || [],
       maxRefinesReached: msg.max_refines_reached || false,
       plateauReached: msg.plateau_reached || false,

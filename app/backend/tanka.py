@@ -43,7 +43,8 @@ async def _run_llm_phase(phase: str, messages: list[dict], *, attempt: int | Non
                          ) -> AsyncIterator[dict[str, Any]]:
     """1 回の LLM 呼び出しを 1 フェーズとして実行する共通ジェネレータ。
     phase_start → chunk* → phase_end を yield する。最終テキストは phase_end.text に載る
-    (呼び出し側は再 yield しつつ phase_end を覗いて結果を取得する)。"""
+    (呼び出し側は再 yield しつつ phase_end を覗いて結果を取得する)。
+    raw は thinking 込みの全文。永続化用 (tasks.py が拾い、SSE へは流さない)。"""
     extra = {"attempt": attempt} if attempt is not None else {}
     yield {"type": "phase_start", "phase": phase, **extra}
     raw = ""
@@ -51,7 +52,7 @@ async def _run_llm_phase(phase: str, messages: list[dict], *, attempt: int | Non
         raw += delta
         yield {"type": "chunk", "phase": phase, "text": delta, **extra}
     _, text = llm.split_harmony(raw)
-    yield {"type": "phase_end", "phase": phase, "text": text, **extra}
+    yield {"type": "phase_end", "phase": phase, "text": text, "raw": raw, **extra}
 
 
 # ────────────────────────── 副作用ヘルパー (イベントを出さない) ──────────────────────────
