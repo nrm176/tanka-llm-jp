@@ -189,7 +189,15 @@ export function normalizeMessage(msg) {
     return {
       kind: 'tanka',
       theme: msg.theme,
-      phases: [],            // 過去の生成過程は再生しない (live のみ)
+      // 永続化された生成過程 (phase 毎の thinking 込み raw) を復元。
+      // raw を PhaseBlock が splitHarmony してライブ時と同じ表示になる。
+      // 古いメッセージ (phases 未保存) は [] のまま。
+      phases: (msg.phases || []).map((p) => ({
+        phase: p.phase,
+        attempt: p.attempt,
+        raw: p.raw || '',
+        complete: true,
+      })),
       validations: msg.validations || [],
       maxRefinesReached: msg.max_refines_reached || false,
       plateauReached: msg.plateau_reached || false,
