@@ -21,6 +21,7 @@ def _tanka_msg(**over) -> dict:
         "image": "夕立あがりの街",
         "emotion": "静けさへの安堵",
         "final_score": 85,
+        "model": "llm-jp-4-8b-thinking",
         "validations": [{"resolved": False}, {"resolved": True}],
         "plateau_reached": False,
         "max_refines_reached": False,
@@ -41,6 +42,7 @@ def test_converts_tanka_message_to_flat_record():
     assert rec["kigo"] == "蝉"
     assert rec["season"] == "夏"
     assert rec["score"] == 85
+    assert rec["model"] == "llm-jp-4-8b-thinking"
     assert rec["attempts"] == 2
     # datetime は isoformat 文字列へ (一覧のソートキー兼 JSON 化)
     assert rec["created_at"] == "2026-06-01T12:00:00+00:00"
@@ -64,6 +66,7 @@ def test_missing_optional_fields_do_not_crash():
     assert rec["attempts"] == 0
     assert rec["moras"] == []
     assert rec["created_at"] is None
+    assert rec["model"] is None  # #15 以前の旧データは model 記録なし
 
 
 def test_naive_created_at_is_treated_as_utc():
