@@ -106,11 +106,12 @@ export async function listSessions() {
   return res.json()
 }
 
-export async function createSession(title = null) {
+export async function createSession(title = null, model = null) {
+  // model を渡すとセッションにモデルを固定する (#20)。null なら既定 (グローバル現在値追従)
   const res = await fetch('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, model }),
   })
   if (!res.ok) throw new Error(`createSession HTTP ${res.status}`)
   return res.json()

@@ -3,7 +3,7 @@
 エンドポイント:
 - GET    /api/health               LM Studio + MongoDB + Redis のヘルス
 - GET    /api/sessions             セッション一覧 (active_task_id 付き)
-- POST   /api/sessions             新規セッション作成
+- POST   /api/sessions             新規セッション作成 (model 指定でセッション固定 #20)
 - GET    /api/sessions/{sid}       セッション全体 (メッセージ込み)
 - PATCH  /api/sessions/{sid}       タイトル更新
 - DELETE /api/sessions/{sid}       削除
@@ -127,6 +127,8 @@ class TankaRequest(BaseModel):
 
 class CreateSessionRequest(BaseModel):
     title: str | None = None
+    # セッション固定モデル (#20)。None ならグローバル現在値に追従
+    model: str | None = Field(None, min_length=1, max_length=200)
 
 
 class UpdateTitleRequest(BaseModel):
@@ -197,18 +199,23 @@ async def get_models() -> dict[str, Any]:
     }
 
 
-@app.post("/api/model")
-async def post_model(req: ModelSwitchRequest) -> dict[str, Any]:
-    """生成モデルを runtime 切替する。実行中タスクは開始時のモデルで走り切り、新規タスクから有効。
-    mongo settings に永続化され、再起動後も維持される (env より優先)。"""
+def _validate_model_choice(model: str) -> None:
+    """モデル指定の妥当性検証 (POST /api/model と POST /api/sessions で共通)。"""
     try:
         ids = llm.list_available_models()
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"LM Studio unreachable: {e}")
-    if req.model not in ids:
-        raise HTTPException(status_code=400, detail=f"model not available in LM Studio: {req.model}")
-    if not llm.is_chat_model(req.model):
-        raise HTTPException(status_code=400, detail=f"not a chat model: {req.model}")
+    if model not in ids:
+        raise HTTPException(status_code=400, detail=f"model not available in LM Studio: {model}")
+    if not llm.is_chat_model(model):
+        raise HTTPException(status_code=400, detail=f"not a chat model: {model}")
+
+
+@app.post("/api/model")
+async def post_model(req: ModelSwitchRequest) -> dict[str, Any]:
+    """生成モデルを runtime 切替する。実行中タスクは開始時のモデルで走り切り、新規タスクから有効。
+    mongo settings に永続化され、再起動後も維持される (env より優先)。"""
+    _validate_model_choice(req.model)
 
     previous = llm.get_model()
     llm.set_model(req.model)
@@ -238,7 +245,9 @@ async def get_sessions() -> list[dict]:
 
 @app.post("/api/sessions")
 async def post_session(req: CreateSessionRequest) -> dict:
-    return db.create_session(title=req.title)
+    if req.model:
+        _validate_model_choice(req.model)
+    return db.create_session(title=req.title, model=req.model)
 
 
 @app.get("/api/sessions/{sid}")
@@ -282,31 +291,37 @@ async def get_active_task(sid: str) -> dict:
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest) -> dict:
-    if not db.get_session(req.session_id):
+    sess = db.get_session(req.session_id)
+    if not sess:
         raise HTTPException(status_code=404, detail="session not found")
     # 同一セッションで既に走っている場合は拒否 (UI 側で防ぐが二重保険)
     if db.find_active_task(req.session_id):
         raise HTTPException(status_code=409, detail="another task is already running for this session")
 
+    # セッション実効モデル (#20) をタスク作成時に解決 (session.model > グローバル現在値)
+    model = llm.effective_model(sess)
     # ユーザーメッセージを即時保存
     db.append_message(req.session_id, {"kind": "user", "content": req.user_message})
     # タスクレコード作成 → asyncio.Task 起動
-    task = db.create_task(req.session_id, kind="chat", input_data={"mode": req.mode})
-    tasks.start_chat(task["id"], req.session_id, req.user_message, req.mode)
+    task = db.create_task(req.session_id, kind="chat", input_data={"mode": req.mode, "model": model})
+    tasks.start_chat(task["id"], req.session_id, req.user_message, req.mode, model=model)
 
     return {"task_id": task["id"], "session_id": req.session_id, "kind": "chat"}
 
 
 @app.post("/api/tanka")
 async def tanka_endpoint(req: TankaRequest) -> dict:
-    if not db.get_session(req.session_id):
+    sess = db.get_session(req.session_id)
+    if not sess:
         raise HTTPException(status_code=404, detail="session not found")
     if db.find_active_task(req.session_id):
         raise HTTPException(status_code=409, detail="another task is already running for this session")
 
+    # セッション実効モデル (#20) をタスク作成時に解決 (session.model > グローバル現在値)
+    model = llm.effective_model(sess)
     db.append_message(req.session_id, {"kind": "user", "content": f"tanka:{req.theme}"})
-    task = db.create_task(req.session_id, kind="tanka", input_data={"theme": req.theme, "max_refines": req.max_refines})
-    tasks.start_tanka(task["id"], req.session_id, req.theme, req.max_refines)
+    task = db.create_task(req.session_id, kind="tanka", input_data={"theme": req.theme, "max_refines": req.max_refines, "model": model})
+    tasks.start_tanka(task["id"], req.session_id, req.theme, req.max_refines, model=model)
 
     return {"task_id": task["id"], "session_id": req.session_id, "kind": "tanka"}
 

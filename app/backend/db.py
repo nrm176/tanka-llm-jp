@@ -82,13 +82,17 @@ def ping() -> bool:
         return False
 
 
-def create_session(title: str | None = None) -> dict:
+def create_session(title: str | None = None, model: str | None = None) -> dict:
+    """model を渡すとセッションにモデルを固定する (#20)。未指定セッションは
+    グローバル現在値に追従する (フィールド自体を持たない)。"""
     doc = {
         "title": title or "新規セッション",
         "created_at": _now(),
         "updated_at": _now(),
         "messages": [],
     }
+    if model:
+        doc["model"] = model
     res = _sessions().insert_one(doc)
     doc["_id"] = res.inserted_id
     return _serialize(doc)  # type: ignore[return-value]

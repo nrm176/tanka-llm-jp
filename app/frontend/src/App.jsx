@@ -330,11 +330,12 @@ function FailuresPanel({ onClose }) {
   )
 }
 
-// ───── モデル切替 (#15) ─────
+// ───── モデル切替 (#15/#20) ─────
 // 自己完結コンポーネント (AppInner の hook 宣言順に影響を与えない — §フック TDZ 罠の回避)。
+// #20 以降これは「既定モデル」: 新規セッションの既定 + モデル未固定セッションのフォールバック。
 // 切替は新規タスクから有効。実行中タスクは開始時のモデルで走り切る (backend 側で保証)。
 
-function ModelSelector() {
+function ModelSelector({ onSwitched }) {
   const [models, setModels] = useState(null)   // {current, default, available[]} | null
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
@@ -357,6 +358,7 @@ function ModelSelector() {
     try {
       await switchModel(model)
       await refresh()
+      onSwitched?.()  // ヘッダの「<model> 接続中」表示を追従させる
     } catch (e2) {
       setErr(e2.message)
     } finally {
@@ -376,7 +378,7 @@ function ModelSelector() {
 
   return (
     <div className="model-selector">
-      <label className="model-selector-label" htmlFor="model-select">モデル</label>
+      <label className="model-selector-label" htmlFor="model-select">既定モデル</label>
       <select
         id="model-select"
         value={models.current}
@@ -393,20 +395,82 @@ function ModelSelector() {
         ))}
       </select>
       <div className="model-selector-hint">
+        新規セッションの既定。モデル固定セッションには影響しません。
         未ロードのモデルは初回生成時にロードが走り遅くなることがあります
       </div>
     </div>
   )
 }
 
-// ───── Sidebar ─────
+// ───── 新規セッション作成 (モデル選択付き #20) ─────
+// クリックでインラインのモデル選択を開き、選んで作成する。
+// 「既定」はモデル未固定 (グローバル現在値追従) のセッションを作る。
 
-function Sidebar({ sessions, activeId, onSelect, onCreate, onDelete }) {
+function NewSessionControl({ onCreate }) {
+  const [open, setOpen] = useState(false)
+  const [models, setModels] = useState(null)
+  const [choice, setChoice] = useState('')   // '' = 既定 (未固定)
+  const [busy, setBusy] = useState(false)
+
+  const toggle = async () => {
+    if (open) { setOpen(false); return }
+    setOpen(true)
+    if (!models) {
+      try { setModels(await listModels()) } catch { setModels({ current: '', available: [] }) }
+    }
+  }
+
+  const create = async () => {
+    setBusy(true)
+    try {
+      await onCreate(choice || null)
+      setOpen(false)
+      setChoice('')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <aside className="sidebar">
-      <button className="new-session" onClick={onCreate} title="新規セッション">
+    <div className="new-session-control">
+      <button className="new-session" onClick={toggle} title="新規セッション">
         + 新しい会話
       </button>
+      {open && (
+        <div className="new-session-panel">
+          <label className="model-selector-label" htmlFor="new-session-model">モデル</label>
+          <select
+            id="new-session-model"
+            value={choice}
+            onChange={(e) => setChoice(e.target.value)}
+            disabled={busy || !models}
+          >
+            <option value="">
+              {models ? `既定 (現在: ${models.current})` : '読込中…'}
+            </option>
+            {(models?.available || []).map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+          <div className="model-selector-hint">
+            モデルを選ぶとこのセッションに固定されます。既定は全体設定に追従します
+          </div>
+          <div className="new-session-actions">
+            <button className="new-session-create" onClick={create} disabled={busy}>作成</button>
+            <button className="new-session-cancel" onClick={() => setOpen(false)} disabled={busy}>キャンセル</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ───── Sidebar ─────
+
+function Sidebar({ sessions, activeId, onSelect, onCreate, onDelete, onModelSwitched }) {
+  return (
+    <aside className="sidebar">
+      <NewSessionControl onCreate={onCreate} />
       <div className="session-list">
         {sessions.length === 0 && (
           <div className="session-empty">セッションなし</div>
@@ -422,6 +486,11 @@ function Sidebar({ sessions, activeId, onSelect, onCreate, onDelete }) {
             >
               {running && <span className="session-spinner" />}
               <div className="session-title">{s.title || '無題'}</div>
+              {s.model && (
+                <span className="session-model" title={`モデル固定: ${s.model}`}>
+                  {String(s.model).split('/').pop()}
+                </span>
+              )}
               <button
                 className="session-delete"
                 title="削除"
@@ -431,7 +500,7 @@ function Sidebar({ sessions, activeId, onSelect, onCreate, onDelete }) {
           )
         })}
       </div>
-      <ModelSelector />
+      <ModelSelector onSwitched={onModelSwitched} />
     </aside>
   )
 }
@@ -529,9 +598,14 @@ function AppInner() {
   const initOnceRef = useRef(false)
 
   // ── ヘルス ──
-  useEffect(() => {
+  // モデル切替 (#15) 後にヘッダ表示を追従させるため、再取得を callback 化して
+  // ModelSelector へ渡す (マウント時 1 回だけだと切替が反映されない)
+  const refreshHealth = useCallback(() => {
     checkHealth().then(setHealth)
   }, [])
+  useEffect(() => {
+    refreshHealth()
+  }, [refreshHealth])
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -890,9 +964,9 @@ function AppInner() {
   }
 
   // ── セッション操作 (ストリーム中の切替も自由に許可。SSE 切断のみ、タスクは生存) ──
-  const handleNewSession = useCallback(async () => {
+  const handleNewSession = useCallback(async (model = null) => {
     try {
-      const created = await createSession()
+      const created = await createSession(null, model)
       const list = await refreshSessions()
       await loadSession(created.id)
       if (!list) await refreshSessions()
@@ -936,10 +1010,13 @@ function AppInner() {
   const statusOk = health.status === 'ok'
   const statusDegraded = health.status === 'degraded'
   const statusClass = statusOk ? 'ok' : (statusDegraded ? 'warn' : (health.status === 'checking' ? '' : 'err'))
+  // アクティブセッションの実効モデル (#20): session.model 固定 > グローバル現在値
+  const activeSession = sessions.find((s) => s.id === activeId)
+  const effectiveModel = activeSession?.model || health.configured_model
   const statusText = health.status === 'checking'
     ? 'バックエンド確認中…'
     : statusOk
-      ? `${health.configured_model} 接続中`
+      ? `${effectiveModel} 接続中${activeSession?.model ? ' (セッション固定)' : ''}`
       : statusDegraded
         ? `部分的に接続: LM=${health.lm_studio_ok ? 'OK' : 'NG'} / Mongo=${health.mongo_ok ? 'OK' : 'NG'}`
         : `バックエンド未接続 (${health.error ?? 'unknown'})`
@@ -952,6 +1029,7 @@ function AppInner() {
         onSelect={loadSession}
         onCreate={handleNewSession}
         onDelete={handleDeleteSession}
+        onModelSwitched={refreshHealth}
       />
 
       <div className="main">
