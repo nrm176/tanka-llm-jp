@@ -16,7 +16,11 @@ SEASON_FINGERPRINT = {
     "夏": "夏の夜",
     "秋": "秋風",
     "冬": "山里は",
+    "新年": "玉箒",
 }
+# フォールバック (TANKA_COMPOSE_FEW_SHOT) に入っているのは四季のみ。
+# 新年は専用定数 (issue #11) で、フォールバックには意図的に含めない。
+FALLBACK_SEASONS = ("春", "夏", "秋", "冬")
 SPRING_MAGNET_PHRASES = ["散る桜", "花の散るらむ", "自然の理への諦観"]
 
 
@@ -26,8 +30,8 @@ def _blob(messages: list[dict]) -> str:
 
 # ── FEW_SHOT_BY_SEASON のスライス健全性 (並べ替え事故の検知) ──
 
-def test_by_season_has_all_four():
-    assert set(prompts.FEW_SHOT_BY_SEASON) == {"春", "夏", "秋", "冬"}
+def test_by_season_has_all_five():
+    assert set(prompts.FEW_SHOT_BY_SEASON) == {"春", "夏", "秋", "冬", "新年"}
 
 
 def test_by_season_each_is_user_assistant_pair():
@@ -46,8 +50,14 @@ def test_by_season_slices_point_to_correct_season():
 
 def test_fallback_list_covers_four_seasons():
     blob = _blob(prompts.TANKA_COMPOSE_FEW_SHOT)
-    for fp in SEASON_FINGERPRINT.values():
-        assert fp in blob
+    for season in FALLBACK_SEASONS:
+        assert SEASON_FINGERPRINT[season] in blob
+
+
+def test_fallback_list_excludes_new_year():
+    # 新年ペアをフォールバックに混ぜない: dynamic=OFF の A/B 統制群と
+    # 季不明/雑フォールバックを従来の「四季全部」のまま保つ (issue #11)
+    assert SEASON_FINGERPRINT["新年"] not in _blob(prompts.TANKA_COMPOSE_FEW_SHOT)
 
 
 # ── select_few_shot の挙動 ──
@@ -69,9 +79,36 @@ def test_dynamic_off_returns_all_four():
 
 
 def test_unknown_season_falls_back_to_all_four():
-    for season in (None, "雑", "新年", "梅雨"):
+    # 新年は #11 で専用ペアを得たのでフォールバック対象から外れた。
+    # 雑は validator が kigo 必須のため意図的に未対応 (issue #11 スコープ外)
+    for season in (None, "雑", "梅雨"):
         got = prompts.select_few_shot(season, dynamic=True)
         assert got is prompts.TANKA_COMPOSE_FEW_SHOT, f"{season} は四季フォールバックすべき"
+
+
+def test_dynamic_new_year_returns_dedicated_pair():
+    pair = prompts.select_few_shot("新年", dynamic=True)
+    assert pair is prompts.TANKA_COMPOSE_FEW_SHOT_NEW_YEAR
+    blob = _blob(pair)
+    assert "玉箒" in blob
+    # 新年 plan で春磁石が見えないこと (これが #11 の核心)
+    for phrase in SPRING_MAGNET_PHRASES:
+        assert phrase not in blob, f"新年 plan なのに春磁石 '{phrase}' が露出している"
+
+
+def test_new_year_exemplar_is_validator_clean():
+    """新年例の assistant JSON が validator に罰されないことの安全網。
+    few-shot は「正解の形」を教えるので、critical/major を踏む例を見せてはいけない。
+    (mora_count_disputed minor は pykakasi の古典読み限界 (CLAUDE.md §6.3) なので許容)"""
+    import json
+
+    import validator
+
+    data = json.loads(prompts.TANKA_COMPOSE_FEW_SHOT_NEW_YEAR[1]["content"])
+    t = validator.Tanka(**data)
+    result = validator.evaluate(t, expected_season="新年", expected_kigo="初春", theme="新年の祝い")
+    bad = [(v.rule, v.severity) for v in result.violations if v.severity in ("critical", "major")]
+    assert not bad, f"新年 few-shot 例が validator に罰される: {bad}"
 
 
 def test_spring_plan_still_shows_spring():
@@ -96,8 +133,10 @@ def test_compose_messages_dynamic_hides_spring_for_summer():
 
 
 def test_compose_messages_default_is_backward_compatible():
-    # 引数を渡さなければ従来どおり四季全部 (既存の呼び出し・挙動を壊さない)
+    # 引数を渡さなければ従来どおり四季全部 (既存の呼び出し・挙動を壊さない)。
+    # 新年ペアはフォールバック外なので、ここに玉箒が現れないことも従来挙動の一部
     msgs = prompts.build_compose_messages("お題", "構想")
     blob = _blob(msgs)
-    for fp in SEASON_FINGERPRINT.values():
-        assert fp in blob
+    for season in FALLBACK_SEASONS:
+        assert SEASON_FINGERPRINT[season] in blob
+    assert SEASON_FINGERPRINT["新年"] not in blob
