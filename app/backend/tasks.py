@@ -137,6 +137,13 @@ async def _run_chat(task_id: str, session_id: str, user_message: str, mode: str)
 
 # ─── tanka タスク ───
 
+# 永続化する各フェーズ raw (thinking 込み全文) の上限。thinking モデルの 1 フェーズは
+# 通常数 KB だが、暴走時にセッションドキュメント (Mongo 16MB 上限) を圧迫しないための保険。
+# 末尾側を切り捨てる: 思考の冒頭を残すほうが「なぜこう詠んだか」の追跡に役立ち、
+# answer 部分は phase_end.text / complete イベント経由で別途残るため失われない。
+PHASE_RAW_CAP = 20_000
+
+
 def apply_event_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
     """パイプラインイベントを final_state に反映する純粋な reducer (副作用なし)。
 
@@ -147,6 +154,17 @@ def apply_event_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
     etype = event.get("type")
     if etype == "rag":
         state["rag_examples"] = event.get("examples", [])
+    elif etype == "phase_end":
+        # 生成過程 (thinking 込み raw) を永続化し、セッション再訪時に再生できるようにする。
+        # chunk は蓄積しない (raw に全文が載っているため)。
+        raw = event.get("raw") or ""
+        if len(raw) > PHASE_RAW_CAP:
+            raw = raw[:PHASE_RAW_CAP] + "\n…(長いため省略)"
+        state["phases"].append({
+            "phase": event.get("phase"),
+            "attempt": event.get("attempt"),
+            "raw": raw,
+        })
     elif etype == "complete":
         state["plan"] = event.get("plan")
         state["tanka"] = event.get("tanka")
@@ -189,6 +207,7 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
         "plan": None,
         "tanka": None,
         "moras": [],
+        "phases": [],  # 生成過程 (phase 毎の thinking 込み raw)。再訪時の再生用
         "validations": [],
         "max_refines_reached": False,
         "plateau_reached": False,
@@ -225,9 +244,13 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
                 except Exception as e:
                     log.warning("record_failure failed: %s", e)
 
-            # フロント送信時は内部用フィールドを落とす (raw_output は重い)
+            # フロント送信時は内部用フィールドを落とす (raw_output / raw は重い)。
+            # phase_end.raw はライブ UI には不要 (chunk から組み立て済み) で永続化専用。
             if etype == "validation":
                 client_event = {k: v for k, v in event.items() if k not in ("raw_output", "parsed_tanka")}
+                await _emit(task_id, client_event)
+            elif etype == "phase_end":
+                client_event = {k: v for k, v in event.items() if k != "raw"}
                 await _emit(task_id, client_event)
             else:
                 await _emit(task_id, event)

@@ -65,8 +65,10 @@ TANKA_SYSTEM_PROMPT = """あなたは熟練した歌人です。短歌の作法�
 【思考言語】
 思考も日本語で行うこと。"""
 
-# 四季全ペアを並べたフォールバック用 few-shot (季節不明・雑・新年、または動的選択 OFF 時)。
+# 四季全ペアを並べたフォールバック用 few-shot (季節不明・雑、または動的選択 OFF 時)。
 # 動的選択 (select_few_shot) は通常ここから「お題の季の 1 ペア」だけを抜き出して使う。
+# 新年は専用ペア (TANKA_COMPOSE_FEW_SHOT_NEW_YEAR) を別定数で持ち、このリストには含めない
+# (dynamic=OFF の A/B 統制群と季不明/雑フォールバックを従来の「四季全部」のまま保つため)。
 # 横断分析で「四季を全部見せても非春 plan の 37% が春へ regress、写し元は #1=散る桜 のみ」と
 # 判明したため、季が分かる場合は他季 (特に春) の磁石を隠すのが既定挙動。
 # 並び順 (春→夏→秋→冬) は FEW_SHOT_BY_SEASON のスライスが依存するので変えないこと。
@@ -158,6 +160,36 @@ TANKA_COMPOSE_FEW_SHOT: list[dict] = [
     )},
 ]
 
+# 新年専用ペア (動的選択でのみ使用、フォールバックには含めない — 上のコメント参照)。
+# 新年 plan が四季フォールバックに落ちると、ドリフト対策前と同じ「春磁石 #1 露出」プロンプトに
+# 戻ってしまう (新年は新春・初春と春に隣接するため引力はむしろ強い) のを塞ぐ (issue #11)。
+# 例は万葉集 20-4493 大伴家持 (PD)。kigo=初春 は辞書 new_year 登録語で、本文に他季の辞書季語なし
+# (validator score 94。より有名な 20-4516「新しき年の…」は 雪=冬 を含み no_other_kigo に
+# 当たるため不採用)。
+TANKA_COMPOSE_FEW_SHOT_NEW_YEAR: list[dict] = [
+    {"role": "user", "content": (
+        "お題: 新年の祝い\n"
+        "構想:\n"
+        "季語: 初春\n"
+        "季節: 新年\n"
+        "情景: 初子の日の宴で玉箒を手に取ると、飾りの玉が揺れて鳴る\n"
+        "心情: 新しい年を寿ぐ晴れやかな祝意\n\n"
+        "JSON 形式で短歌を出力してください。構想で決めた kigo と season を絶対に変えないこと。"
+    )},
+    {"role": "assistant", "content": (
+        '{"kigo": "初春", "season": "新年", '
+        '"lines": ['
+        '{"body": "初春の", "reading": "はつはるの"}, '
+        '{"body": "初子の今日の", "reading": "はつねのけふの"}, '
+        '{"body": "玉箒", "reading": "たまばはき"}, '
+        '{"body": "手に取るからに", "reading": "てにとるからに"}, '
+        '{"body": "揺らく玉の緒", "reading": "ゆらくたまのを"}'
+        '], '
+        '"image": "初子の日の宴で玉箒を手に取ると、飾りの玉が揺れて鳴る", '
+        '"emotion": "新しい年を寿ぐ晴れやかな祝意"}'
+    )},
+]
+
 # 季節 → その季の few-shot ペア (user/assistant)。動的選択で「お題の季の例だけ」を見せ、
 # 他季の磁石 (特に #1 散る桜=春) を隠して Plan→Compose の季ドリフトを抑えるための索引。
 # スライスは TANKA_COMPOSE_FEW_SHOT の並び順 (春→夏→秋→冬) に依存する。
@@ -166,15 +198,17 @@ FEW_SHOT_BY_SEASON: dict[str, list[dict]] = {
     "夏": TANKA_COMPOSE_FEW_SHOT[2:4],
     "秋": TANKA_COMPOSE_FEW_SHOT[4:6],
     "冬": TANKA_COMPOSE_FEW_SHOT[6:8],
+    "新年": TANKA_COMPOSE_FEW_SHOT_NEW_YEAR,
 }
 
 
 def select_few_shot(season_hint: str | None, *, dynamic: bool) -> list[dict]:
     """compose に注入する few-shot を選ぶ (純関数)。
 
-    dynamic=True かつ season_hint が四季 (春夏秋冬) のいずれかなら、その季の 1 ペアのみを返す
-    (他季 — 特に春の散る桜 — の磁石を隠す)。それ以外 (dynamic=False / 季不明 / 雑 / 新年) は
-    四季全ペアを返す (従来挙動)。新年は専用例が無いため四季全部にフォールバックする。"""
+    dynamic=True かつ season_hint が五季 (春夏秋冬・新年) のいずれかなら、その季の 1 ペアのみを
+    返す (他季 — 特に春の散る桜 — の磁石を隠す)。それ以外 (dynamic=False / 季不明 / 雑) は
+    四季全ペアを返す (従来挙動)。雑は専用例を validator が現状サポートしない (kigo 必須) ため
+    意図的に未対応 (issue #11 スコープ外)。"""
     if dynamic and season_hint in FEW_SHOT_BY_SEASON:
         return FEW_SHOT_BY_SEASON[season_hint]
     return TANKA_COMPOSE_FEW_SHOT

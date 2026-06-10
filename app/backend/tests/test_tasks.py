@@ -11,6 +11,7 @@ import tasks
 
 def _base_state() -> dict:
     return {
+        "phases": [],
         "validations": [],
         "max_refines_reached": False,
         "plateau_reached": False,
@@ -80,3 +81,39 @@ def test_rag_event_sets_examples():
     s = _base_state()
     tasks.apply_event_to_state(s, {"type": "rag", "examples": [{"text": "x"}]})
     assert s["rag_examples"] == [{"text": "x"}]
+
+
+def test_phase_end_accumulates_generation_process():
+    # 生成過程 (thinking 込み raw) はセッション再訪時の再生用に phase 毎へ永続化する (issue #16)。
+    # chunk / phase_start は蓄積しない (raw に全文が載るため)
+    s = _base_state()
+    tasks.apply_event_to_state(s, {"type": "phase_start", "phase": "plan"})
+    tasks.apply_event_to_state(s, {"type": "chunk", "phase": "plan", "text": "ignored"})
+    tasks.apply_event_to_state(
+        s, {"type": "phase_end", "phase": "plan", "text": "answer",
+            "raw": "thinking…<|channel|>final<|message|>answer"}
+    )
+    tasks.apply_event_to_state(
+        s, {"type": "phase_end", "phase": "refine", "attempt": 2, "text": "a2", "raw": "r2"}
+    )
+    assert [p["phase"] for p in s["phases"]] == ["plan", "refine"]
+    assert s["phases"][0]["raw"].startswith("thinking…")
+    assert s["phases"][0]["attempt"] is None
+    assert s["phases"][1]["attempt"] == 2
+
+
+def test_phase_end_raw_is_capped():
+    s = _base_state()
+    tasks.apply_event_to_state(
+        s, {"type": "phase_end", "phase": "compose", "text": "t", "raw": "x" * (tasks.PHASE_RAW_CAP + 500)}
+    )
+    raw = s["phases"][0]["raw"]
+    assert len(raw) <= tasks.PHASE_RAW_CAP + 20  # キャップ + 省略マーカー分
+    assert raw.endswith("…(長いため省略)")
+
+
+def test_phase_end_missing_raw_defaults_to_empty():
+    # 旧バージョンのイベント (raw なし) でも壊れない
+    s = _base_state()
+    tasks.apply_event_to_state(s, {"type": "phase_end", "phase": "plan", "text": "t"})
+    assert s["phases"][0]["raw"] == ""

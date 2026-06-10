@@ -11,6 +11,7 @@
 
 - POST   /api/chat                 チャットタスク作成 → {task_id} を即返す (LLM はバックグラウンド)
 - POST   /api/tanka                短歌タスク作成 → {task_id}
+- GET    /api/tanka/records        全セッション横断の短歌一覧 (新しい順)
 - GET    /api/tasks/{tid}/stream   SSE: タスクのイベントストリーム (replay+ライブ)
 - POST   /api/tasks/{tid}/cancel   実行中タスクのキャンセル
 
@@ -372,6 +373,17 @@ async def get_eval_runs() -> list[dict]:
     """eval.sh / eval-repeat.sh が作った eval セッションを、進捗サマリ付きで返す。
     フロントの「評価モニタ」がこれをポーリングして各 run の状況を表示する。"""
     return db.list_eval_runs()
+
+
+# ─── Tanka Gallery: 全セッション横断の短歌一覧 ───
+
+@app.get("/api/tanka/records")
+async def get_tanka_records(limit: int = 500) -> dict:
+    """過去に生成した短歌を全セッション横断で新しい順に返す。フロントの「短歌一覧」ビュー用。
+
+    count は limit 適用前のトータル件数 (UI が「全 N 首」を正しく出せるように)。"""
+    records = db.list_tanka_records()
+    return {"count": len(records), "items": records[: max(1, min(limit, 2000))]}
 
 
 # ─── Failures (長期記憶) の閲覧・クリア ───
