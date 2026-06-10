@@ -157,8 +157,8 @@ def _complete_event(plan: str, tanka_obj, score: int, fallback_text: str,
 
 # ────────────────────────── パイプライン本体 ──────────────────────────
 
-async def generate_tanka_pipeline(theme: str, max_refines: int | None = None
-                                  ) -> AsyncIterator[dict[str, Any]]:
+async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
+                                  model: str | None = None) -> AsyncIterator[dict[str, Any]]:
     """短歌生成パイプライン。改善が続く限り refine し、全 attempt の最高 score を最終結果に採用する。"""
     import db          # 循環 import 回避のため遅延
     import rag
@@ -166,7 +166,8 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None
 
     # モデルはパイプライン開始時に確定 (#15)。途中で切替されても一連の生成は同一モデルで走り、
     # score_history が混ざらない。切替は次のタスクから有効になる。
-    model = llm.get_model()
+    # 呼び出し側 (tasks.py) がセッション実効モデル (#20) を渡す。未指定はグローバル現在値。
+    model = model or llm.get_model()
     log.info("tanka pipeline start: theme=%s model=%s", theme, model)
 
     # ── Step 1: Plan ──
@@ -293,12 +294,14 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None
 
 # ────────────────────────── 通常チャット ──────────────────────────
 
-async def chat_stream(user_messages: list[dict], mode: str = "normal") -> AsyncIterator[dict[str, Any]]:
-    """単発チャットをストリームし chunk と complete を yield する。"""
+async def chat_stream(user_messages: list[dict], mode: str = "normal",
+                      model: str | None = None) -> AsyncIterator[dict[str, Any]]:
+    """単発チャットをストリームし chunk と complete を yield する。
+    model はタスク作成時に解決済みのセッション実効モデル (#20)。未指定はグローバル現在値。"""
     system = prompts.TANKA_SYSTEM_PROMPT if mode == "tanka" else prompts.NORMAL_SYSTEM_PROMPT
     messages = [{"role": "system", "content": system}, *user_messages]
     raw = ""
-    async for delta in llm.stream_completion(messages):
+    async for delta in llm.stream_completion(messages, model=model):
         raw += delta
         yield {"type": "chunk", "text": delta}
     reasoning, answer = llm.split_harmony(raw)

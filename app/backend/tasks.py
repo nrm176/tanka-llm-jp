@@ -90,7 +90,8 @@ async def _finalize(task_id: str, status: str, error: str | None = None) -> None
 
 # ─── chat タスク ───
 
-async def _run_chat(task_id: str, session_id: str, user_message: str, mode: str) -> None:
+async def _run_chat(task_id: str, session_id: str, user_message: str, mode: str,
+                    model: str | None = None) -> None:
     """user メッセージは既に DB に書かれている前提。
     DB から履歴を再構築 → LLM ストリーム → 最終結果を DB に保存。"""
     log.info("chat task started: task=%s session=%s mode=%s", task_id, session_id, mode)
@@ -100,7 +101,7 @@ async def _run_chat(task_id: str, session_id: str, user_message: str, mode: str)
         history_db = sess.get("messages", [])
         api_messages = _db_messages_to_api(history_db)
 
-        async for event in tanka.chat_stream(api_messages, mode=mode):
+        async for event in tanka.chat_stream(api_messages, mode=mode, model=model):
             etype = event.get("type")
             if etype == "chunk":
                 raw += event.get("text", "")
@@ -197,7 +198,8 @@ def apply_event_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
         state["llm_error_recovered"] = event.get("recovered", False)
 
 
-async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int) -> None:
+async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int,
+                     model: str | None = None) -> None:
     """tanka:お題 のユーザーメッセージは既に DB に書かれている前提。
     パイプライン実行 → 完成短歌を DB に保存。"""
     log.info("tanka task started: task=%s theme=%s", task_id, theme)
@@ -223,7 +225,7 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
         "rag_examples": [],  # RAG で参照した古典作例
     }
     try:
-        async for event in tanka.generate_tanka_pipeline(theme, max_refines=max_refines):
+        async for event in tanka.generate_tanka_pipeline(theme, max_refines=max_refines, model=model):
             etype = event.get("type")
             apply_event_to_state(final_state, event)
 
@@ -287,9 +289,13 @@ def _register(task_id: str, coro):
     return t
 
 
-def start_chat(task_id: str, session_id: str, user_message: str, mode: str) -> asyncio.Task:
-    return _register(task_id, _run_chat(task_id, session_id, user_message, mode))
+def start_chat(task_id: str, session_id: str, user_message: str, mode: str,
+               model: str | None = None) -> asyncio.Task:
+    """model はセッション実効モデル (#20)。main.py がタスク作成時に解決して渡す。"""
+    return _register(task_id, _run_chat(task_id, session_id, user_message, mode, model=model))
 
 
-def start_tanka(task_id: str, session_id: str, theme: str, max_refines: int) -> asyncio.Task:
-    return _register(task_id, _run_tanka(task_id, session_id, theme, max_refines))
+def start_tanka(task_id: str, session_id: str, theme: str, max_refines: int,
+                model: str | None = None) -> asyncio.Task:
+    """model はセッション実効モデル (#20)。main.py がタスク作成時に解決して渡す。"""
+    return _register(task_id, _run_tanka(task_id, session_id, theme, max_refines, model=model))

@@ -39,6 +39,13 @@ def set_model(model: str) -> None:
     _current_model = model
 
 
+def effective_model(session: dict | None) -> str:
+    """セッションの実効モデルを解決する (#20): session.model > グローバル現在値。
+    セッション作成時にモデルを固定したセッションはそれを使い、未固定 (legacy 含む) は
+    グローバル切替に追従する。タスク作成時に一度だけ解決し、スナップショットとして渡すこと。"""
+    return (session or {}).get("model") or get_model()
+
+
 def is_chat_model(model_id: str) -> bool:
     """embedding 系モデルを除外する素朴なフィルタ。
     LM Studio の /v1/models は能力フラグを返さないため名前で判定する。"""

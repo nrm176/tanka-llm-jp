@@ -71,3 +71,39 @@ def test_long_term_failures_filtered_by_model():
     assert all(c["model"] == "m3" for c in stub.calls)
     assert stub.calls[0]["season"] == "夏"
     assert stub.calls[1]["season"] is None
+
+
+# ── セッション実効モデルの解決 (#20): session.model > グローバル現在値 ──
+
+def test_effective_model_prefers_session_pin():
+    original = llm.get_model()
+    try:
+        llm.set_model("global-x")
+        assert llm.effective_model({"model": "pinned-y"}) == "pinned-y"
+    finally:
+        llm.set_model(original)
+
+
+def test_effective_model_falls_back_to_current():
+    original = llm.get_model()
+    try:
+        llm.set_model("global-x")
+        assert llm.effective_model({}) == "global-x"          # 未固定セッション
+        assert llm.effective_model(None) == "global-x"        # セッション無し
+        assert llm.effective_model({"model": None}) == "global-x"  # 明示 None も未固定扱い
+    finally:
+        llm.set_model(original)
+
+
+def test_effective_model_tracks_global_switch():
+    # 未固定セッションはグローバル切替に追従する (固定セッションは影響を受けない)
+    original = llm.get_model()
+    try:
+        llm.set_model("m-a")
+        unpinned, pinned = {}, {"model": "m-pin"}
+        assert llm.effective_model(unpinned) == "m-a"
+        llm.set_model("m-b")
+        assert llm.effective_model(unpinned) == "m-b"
+        assert llm.effective_model(pinned) == "m-pin"
+    finally:
+        llm.set_model(original)
