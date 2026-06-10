@@ -512,6 +512,74 @@ def test_theme_time_no_time_in_theme():
     assert "theme_time_mismatch" not in {v.rule for v in result.violations}
 
 
+# ─── お題の主題 (語彙・モチーフ) 遵守 (theme_motif_uncovered) ───
+
+def test_theme_topic_kanji_excludes_season_and_time():
+    # 季節・時間帯の漢字は主題から除外され、事物の漢字だけが残る
+    assert validator._theme_topic_kanji("夏の夕暮れ") == set()
+    topic = validator._theme_topic_kanji("海辺の街を見下ろす坂道")
+    assert {"海", "坂", "道"} <= topic
+
+
+def test_theme_motif_uncovered_flagged_when_off_topic():
+    # お題は「海辺…坂道」だが、歌も情景も心情も春の花でお題の事物が皆無 → minor
+    t = make_tanka(kigo="花", season="春",
+        lines=[
+            ("花が散る", "はながちる"),
+            ("風に舞ひて", "かぜにまいて"),
+            ("地に落ちぬ", "ちにおちぬ"),
+            ("春の名残を", "はるのなごりを"),
+            ("惜しむ頃かな", "おしむころかな"),
+        ],
+        image="春の野に桜が静かに散る", emotion="花への憐れみ")
+    result = validator.evaluate(t, theme="海辺の街を見下ろす坂道")
+    assert "theme_motif_uncovered" in {v.rule for v in result.violations}
+
+
+def test_theme_motif_uncovered_silent_when_motif_present():
+    # 「海」「坂」「道」等が情景・本文にあれば不問 (漢字 1 つでも一致で OK = 緩い条件)
+    t = make_tanka(kigo="蛍", season="夏",
+        lines=[
+            ("坂の上", "さかのうえ"),
+            ("蛍ひとつ", "ほたるひとつ"),
+            ("流れ星", "ながれぼし"),
+            ("海を見る夜", "うみをみるよ"),
+            ("更けゆく時", "ふけゆくとき"),
+        ],
+        image="海辺の坂道を下る", emotion="郷愁")
+    result = validator.evaluate(t, theme="海辺の街を見下ろす坂道")
+    assert "theme_motif_uncovered" not in {v.rule for v in result.violations}
+
+
+def test_theme_motif_uncovered_silent_when_theme_is_season_time_only():
+    # お題が季節・時刻だけ (主題漢字なし) なら発火しない (季節/時刻は専用ルールに委ねる)
+    t = make_tanka(kigo="花", season="春", lines=[
+        ("花が散る", "はながちる"),
+        ("水面光る", "みなもひかる"),
+        ("山の影に", "やまのかげに"),
+        ("風そよぐなり", "かぜそよぐなり"),
+        ("遠き面影", "とおきおもかげ"),
+    ])
+    result = validator.evaluate(t, theme="夏の夕暮れ")
+    assert "theme_motif_uncovered" not in {v.rule for v in result.violations}
+
+
+def test_theme_motif_uncovered_is_minor():
+    # 単独では合格を妨げない軽微な減点 (NER なしの保守的近似なので minor)
+    t = make_tanka(kigo="花", season="春",
+        lines=[
+            ("花が散る", "はながちる"),
+            ("風に舞ひて", "かぜにまいて"),
+            ("地に落ちぬ", "ちにおちぬ"),
+            ("春の名残を", "はるのなごりを"),
+            ("惜しむ頃かな", "おしむころかな"),
+        ],
+        image="春の野に桜が散る", emotion="花への憐れみ")
+    result = validator.evaluate(t, theme="海辺の街を見下ろす坂道")
+    mv = [v for v in result.violations if v.rule == "theme_motif_uncovered"]
+    assert mv and mv[0].severity == "minor"
+
+
 # ─── Plan 抽出 ───
 
 @pytest.mark.parametrize("text,expected", [
@@ -554,7 +622,7 @@ def test_every_rule_has_a_lesson():
         "season_consistent", "no_other_kigo_cross", "no_other_kigo_same",
         "repeated_word", "kireji_absent",
         "season_matches_plan", "kigo_matches_plan", "theme_time_mismatch",
-        "theme_time_uncovered", "schema_invalid",
+        "theme_time_uncovered", "theme_motif_uncovered", "schema_invalid",
     }
     missing = rule_names - set(validator.LESSONS.keys())
     assert not missing, f"LESSONS に欠けているルール: {missing}"

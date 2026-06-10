@@ -66,6 +66,7 @@ RULE_WEIGHTS: dict[str, int] = {
     # お題との整合 (theme-aware)
     "theme_time_mismatch":   _env_int("TANKA_W_THEME_TIME_MISMATCH", 25),  # 夕暮れのお題に朝 等
     "theme_time_uncovered":  _env_int("TANKA_W_THEME_TIME_UNCOVERED", 5),  # お題の時刻が本文に皆無 (欠如)
+    "theme_motif_uncovered": _env_int("TANKA_W_THEME_MOTIF_UNCOVERED", 5), # お題の主題が本文に皆無
 }
 
 
@@ -340,6 +341,38 @@ def _check_theme_time_uncovered(t: Tanka, theme: str) -> list[Violation]:
     )]
 
 
+# 季節ラベル + 時間帯語に含まれる漢字。主題チェックでは除外し、季節/時刻は専用ルールに委ねる。
+_SEASON_TIME_KANJI: set[str] = set("春夏秋冬新") | {
+    c for _, words in _TIME_BANDS for w in words for c in w if "一" <= c <= "鿿"
+}
+
+
+def _theme_topic_kanji(theme: str) -> set[str]:
+    """お題から「主題」を表す漢字集合を返す (季節・時間帯の漢字は除外)。"""
+    return {c for c in theme if "一" <= c <= "鿿"} - _SEASON_TIME_KANJI
+
+
+def _check_theme_motif(t: Tanka, theme: str) -> list[Violation]:
+    """お題の「主題」(季節・時刻以外の事物・場面) が短歌に全く反映されていなければ minor で促す。
+
+    お題から主題を表す漢字を集め (季節・時間帯の漢字は theme_time 系に委ねて除外)、その漢字が
+    本文・情景(image)・心情(emotion) のどこにも 1 つも現れなければ「お題無視」とみなす。
+    短歌はイメージで詠むため **漢字 1 つでも一致すれば不問** という極めて緩い条件にして誤検出を
+    抑え (低 weight の minor)、egregious に的外れな生成だけを拾う。日本語 NER が無い制約下での
+    保守的な近似であり、imagery 偏重の佳作を稀に拾うことは minor 重みで許容する。"""
+    topic = _theme_topic_kanji(theme)
+    if not topic:
+        return []  # 季節・時刻のみのお題 (主題漢字なし) → 専用ルールに委ねる
+    haystack = "".join(line.body for line in t.lines) + (t.image or "") + (t.emotion or "")
+    if any(c in haystack for c in topic):
+        return []  # 主題漢字が一つでも本文/情景/心情にあれば OK
+    return [_violation(
+        "theme_motif_uncovered", "minor", _w("theme_motif_uncovered"),
+        f"お題「{theme}」の主題が、短歌にも情景・心情にも見当たりません。"
+        f"お題の場面・事物を一つは詠み込んでください。"
+    )]
+
+
 def _rule_no_other_kigo(t: Tanka) -> list[Violation]:
     """一首一季語の厳格運用: 宣言した季語**以外の季語を一切含めない**。
 
@@ -521,6 +554,7 @@ def evaluate(
     if theme:
         violations.extend(_check_theme_time(t, theme))
         violations.extend(_check_theme_time_uncovered(t, theme))
+        violations.extend(_check_theme_motif(t, theme))
 
     score = max(0, 100 - sum(v.weight for v in violations))
     return ValidationResult(
@@ -620,6 +654,7 @@ LESSONS: dict[str, str] = {
     "kigo_matches_plan": "構想ステップで決めた季語をそのまま使う",
     "theme_time_mismatch": "お題が指す時間帯 (夕暮れ・朝・夜 等) に合った情景を詠む",
     "theme_time_uncovered": "お題が時間帯を指すときは、その時刻が伝わる景物 (光・空の色・影 等) を一つは詠み込む",
+    "theme_motif_uncovered": "お題が指す場面・事物 (海辺・坂道・団欒 等) を短歌に一つは詠み込む",
     "kigo_in_dictionary": "なるべく一般的に通用する季語を選ぶ",
     "mora_count": "拍数 5-7-5-7-7 を厳守する。漢字の現代読みでも数えられるようにする",
     "mora_count_off_by_one": "字余り・字足らずは ±1 まで許容されるが、特に意図がなければ整える",
