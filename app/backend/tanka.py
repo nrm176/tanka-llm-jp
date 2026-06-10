@@ -39,16 +39,17 @@ stream_completion = llm.stream_completion
 
 # ────────────────────────── ストリーミングのフェーズ実行 ──────────────────────────
 
-async def _run_llm_phase(phase: str, messages: list[dict], *, attempt: int | None = None
-                         ) -> AsyncIterator[dict[str, Any]]:
+async def _run_llm_phase(phase: str, messages: list[dict], *, attempt: int | None = None,
+                         model: str | None = None) -> AsyncIterator[dict[str, Any]]:
     """1 回の LLM 呼び出しを 1 フェーズとして実行する共通ジェネレータ。
     phase_start → chunk* → phase_end を yield する。最終テキストは phase_end.text に載る
     (呼び出し側は再 yield しつつ phase_end を覗いて結果を取得する)。
+    model はパイプライン開始時のスナップショット (#15): 生成途中の切替の影響を受けない。
     raw は thinking 込みの全文。永続化用 (tasks.py が拾い、SSE へは流さない)。"""
     extra = {"attempt": attempt} if attempt is not None else {}
     yield {"type": "phase_start", "phase": phase, **extra}
     raw = ""
-    async for delta in llm.stream_completion(messages):
+    async for delta in llm.stream_completion(messages, model=model):
         raw += delta
         yield {"type": "chunk", "phase": phase, "text": delta, **extra}
     _, text = llm.split_harmony(raw)
@@ -57,14 +58,15 @@ async def _run_llm_phase(phase: str, messages: list[dict], *, attempt: int | Non
 
 # ────────────────────────── 副作用ヘルパー (イベントを出さない) ──────────────────────────
 
-def _load_long_term_failures(db, season_hint: str | None) -> list[dict]:
-    """plan の季節に一致する失敗を優先取得。なければグローバル直近。失敗しても空で続行。"""
+def _load_long_term_failures(db, season_hint: str | None, model: str | None = None) -> list[dict]:
+    """plan の季節に一致する失敗を優先取得。なければグローバル直近。失敗しても空で続行。
+    model を渡すと同一モデルの失敗のみ注入する (#15: 教訓の cross-model 汚染防止)。"""
     try:
         failures: list[dict] = []
         if season_hint:
-            failures = db.recent_failures(limit=3, season=season_hint)
+            failures = db.recent_failures(limit=3, season=season_hint, model=model)
         if not failures:
-            failures = db.recent_failures(limit=3)
+            failures = db.recent_failures(limit=3, model=model)
         if failures:
             log.info("injecting %d long-term failure example(s) (season=%s)", len(failures), season_hint)
         return failures
@@ -132,7 +134,8 @@ def _score_one(validator, composition: str, season_hint: str | None, kigo_hint: 
     }
 
 
-def _complete_event(plan: str, tanka_obj, score: int, fallback_text: str) -> dict[str, Any]:
+def _complete_event(plan: str, tanka_obj, score: int, fallback_text: str,
+                    model: str | None = None) -> dict[str, Any]:
     if tanka_obj is not None:
         return {
             "type": "complete",
@@ -142,11 +145,13 @@ def _complete_event(plan: str, tanka_obj, score: int, fallback_text: str) -> dic
             "kigo": tanka_obj.kigo, "season": tanka_obj.season,
             "image": tanka_obj.image, "emotion": tanka_obj.emotion,
             "score": score,
+            "model": model,
         }
     # スキーマすら通らなかった: 生テキストをベストエフォートで返す
     return {
         "type": "complete", "tanka": fallback_text, "plan": plan, "moras": [],
         "kigo": None, "season": None, "image": None, "emotion": None, "score": 0,
+        "model": model,
     }
 
 
@@ -159,11 +164,14 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None
     import rag
     import validator
 
-    log.info("tanka pipeline start: theme=%s", theme)
+    # モデルはパイプライン開始時に確定 (#15)。途中で切替されても一連の生成は同一モデルで走り、
+    # score_history が混ざらない。切替は次のタスクから有効になる。
+    model = llm.get_model()
+    log.info("tanka pipeline start: theme=%s model=%s", theme, model)
 
     # ── Step 1: Plan ──
     plan = ""
-    async for ev in _run_llm_phase("plan", prompts.build_plan_messages(theme)):
+    async for ev in _run_llm_phase("plan", prompts.build_plan_messages(theme), model=model):
         if ev["type"] == "phase_end":
             plan = ev["text"]
         yield ev
@@ -173,7 +181,8 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None
     log.info("plan extracted: season=%s kigo=%s", season_hint, kigo_hint)
 
     # ── 注入ブロックの準備 (長期失敗記憶 + RAG) ──
-    long_term_block = validator.format_long_term_failures(_load_long_term_failures(db, season_hint))
+    long_term_block = validator.format_long_term_failures(
+        _load_long_term_failures(db, season_hint, model=model))
     rag_block, rag_examples = _build_rag(rag, validator, theme, plan, season_hint, kigo_hint)
     if rag_examples:
         yield _rag_event(rag_examples)
@@ -195,7 +204,7 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None
     # ── Step 2: Compose ──
     compose_messages = compose_base()
     composition = ""
-    async for ev in _run_llm_phase("compose", compose_messages):
+    async for ev in _run_llm_phase("compose", compose_messages, model=model):
         if ev["type"] == "phase_end":
             composition = ev["text"]
         yield ev
@@ -207,7 +216,7 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None
             {"role": "user", "content": prompts.SELF_CRITIQUE_USER},
         ]
         try:
-            async for ev in _run_llm_phase("self_critique", sc_messages):
+            async for ev in _run_llm_phase("self_critique", sc_messages, model=model):
                 if ev["type"] == "phase_end" and ev["text"].strip():
                     composition = ev["text"]
                 yield ev
@@ -231,7 +240,7 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None
 
         resolved = r["tanka_obj"] is not None and score >= validator.PASS_THRESHOLD
         yield {
-            "type": "validation", "attempt": attempt, "score": score,
+            "type": "validation", "attempt": attempt, "score": score, "model": model,
             "errors": r["errors"], "warnings": r["warnings"], "violations": r["violations"],
             "parsed_tanka": r["tanka_obj"].model_dump() if r["tanka_obj"] else None,
             "raw_output": composition, "resolved": resolved,
@@ -266,7 +275,7 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None
         ]
         attempt += 1
         try:
-            async for ev in _run_llm_phase("refine", refine_messages, attempt=attempt):
+            async for ev in _run_llm_phase("refine", refine_messages, attempt=attempt, model=model):
                 if ev["type"] == "phase_end":
                     composition = ev["text"]
                 yield ev
@@ -279,7 +288,7 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None
             final_score = best_score if best_obj else 0
             break
 
-    yield _complete_event(plan, final_obj, final_score, composition)
+    yield _complete_event(plan, final_obj, final_score, composition, model=model)
 
 
 # ────────────────────────── 通常チャット ──────────────────────────

@@ -43,6 +43,10 @@ def _failures() -> Collection:
     return _get_client()[MONGO_DB]["failures"]
 
 
+def _settings() -> Collection:
+    return _get_client()[MONGO_DB]["settings"]
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -214,9 +218,31 @@ def find_active_task(session_id: str) -> dict | None:
     ))
 
 
+# ─── settings コレクション (runtime 設定の永続化) ───
+# 現状は生成モデル ("model") のみ。_id を設定キーとして使う 1 キー 1 ドキュメント。
+
+def get_setting(key: str, default: Any = None) -> Any:
+    try:
+        doc = _settings().find_one({"_id": key})
+    except PyMongoError as e:
+        log.warning("get_setting(%s) failed: %s", key, e)
+        return default
+    return doc.get("value", default) if doc else default
+
+
+def set_setting(key: str, value: Any) -> None:
+    _settings().update_one(
+        {"_id": key},
+        {"$set": {"value": value, "updated_at": _now()}},
+        upsert=True,
+    )
+
+
 # ─── failures コレクション (長期失敗記憶) ───
 # 検証で不合格になった生成物を蓄積し、将来の生成 prompt に anti-example として注入する。
 # サイズ暴走を避けるため、書き込み毎に古いものを pruning する (簡易 LRU)。
+# model フィールドでどのモデルの失敗かを刻む (#15): 教訓はモデル固有の挙動なので、
+# 別モデルの prompt に注入しない (recent_failures の model フィルタとペア)。
 
 FAILURE_MAX = 1000
 
@@ -231,6 +257,7 @@ def record_failure(
     parsed: dict | None,
     score: int,
     violations: list[dict],
+    model: str | None = None,
 ) -> None:
     doc = {
         "task_id": task_id,
@@ -241,6 +268,7 @@ def record_failure(
         "parsed": parsed,
         "score": score,
         "violations": violations,
+        "model": model,
         "ts": _now(),
     }
     _failures().insert_one(doc)
@@ -261,13 +289,27 @@ def _prune_failures(max_count: int = FAILURE_MAX) -> None:
     coll.delete_many({"ts": {"$lte": cutoff_ts}})
 
 
-def recent_failures(*, limit: int = 5, season: str | None = None) -> list[dict]:
-    """直近の失敗を取得。season を指定すると同季のもののみ返す。"""
+def recent_failures(*, limit: int = 5, season: str | None = None,
+                    model: str | None = None) -> list[dict]:
+    """直近の失敗を取得。season を指定すると同季のもののみ、
+    model を指定するとそのモデルの失敗のみ返す (教訓の cross-model 汚染防止)。"""
     q: dict[str, Any] = {}
     if season:
         q["parsed.season"] = season
+    if model:
+        q["model"] = model
     cursor = _failures().find(q).sort("ts", -1).limit(limit)
     return [_serialize(d) for d in cursor]  # type: ignore[return-value]
+
+
+def backfill_failure_model(model: str) -> int:
+    """model フィールドを持たない legacy failure に既定モデルを刻む (起動時の一回限り移行)。
+    この機能 (#15) 以前の失敗はすべて env 既定モデルで生成されたものなので、それを真とする。
+    {"model": None} は「フィールド欠落」も match する (mongo の null セマンティクス)。"""
+    res = _failures().update_many({"model": None}, {"$set": {"model": model}})
+    if res.modified_count:
+        log.info("backfilled model=%s on %d legacy failure record(s)", model, res.modified_count)
+    return res.modified_count
 
 
 def list_failures(*, limit: int = 100) -> list[dict]:

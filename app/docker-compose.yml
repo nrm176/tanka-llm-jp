@@ -52,7 +52,8 @@ services:
       - "8001:8001"
     environment:
       LM_STUDIO_URL: http://host.docker.internal:1234/v1
-      LM_STUDIO_MODEL: llm-jp-4-8b-thinking
+      # 起動時の既定モデル。UI から切替えると mongo settings の値がこれより優先される (#15)
+      LM_STUDIO_MODEL: ${LM_STUDIO_MODEL:-llm-jp-4-8b-thinking}
       MONGO_URL: mongodb://mongo:27017
       MONGO_DB: tanka_chat
       REDIS_URL: redis://redis:6379/0

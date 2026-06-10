@@ -17,7 +17,37 @@ import config
 log = logging.getLogger("llm")
 
 LM_STUDIO_URL = config.LM_STUDIO_URL
-MODEL = config.MODEL
+
+# 起動時の既定モデル (env LM_STUDIO_MODEL)。後方互換のため MODEL の名前も残すが、
+# 現在値は runtime 切替可能 (#15) なので参照は get_model() を使うこと。
+DEFAULT_MODEL = config.MODEL
+MODEL = DEFAULT_MODEL
+
+_current_model: str = DEFAULT_MODEL
+
+
+def get_model() -> str:
+    """現在の生成モデル。タスク開始時にスナップショットして使う (途中切替の影響を受けない)。"""
+    return _current_model
+
+
+def set_model(model: str) -> None:
+    """生成モデルを runtime 切替する (POST /api/model)。永続化は呼び出し側 (main.py) の責務。"""
+    global _current_model
+    if model != _current_model:
+        log.info("model switched: %s -> %s", _current_model, model)
+    _current_model = model
+
+
+def is_chat_model(model_id: str) -> bool:
+    """embedding 系モデルを除外する素朴なフィルタ。
+    LM Studio の /v1/models は能力フラグを返さないため名前で判定する。"""
+    return "embed" not in model_id.lower()
+
+
+def list_available_models() -> list[str]:
+    """LM Studio がロード/ダウンロード済みのモデル id 一覧 (ヘルスチェックと同じ経路)。"""
+    return [m.id for m in client.models.list().data]
 
 _TIMEOUT = httpx.Timeout(
     connect=config.LLM_CONNECT_TIMEOUT,
@@ -57,10 +87,12 @@ def is_context_error(exc: Exception) -> bool:
     ))
 
 
-async def stream_completion(messages: list[dict], temperature: float = 0.3) -> AsyncIterator[str]:
-    """LM Studio に投げて生のテキスト delta を yield する (async)。"""
+async def stream_completion(messages: list[dict], temperature: float = 0.3,
+                            model: str | None = None) -> AsyncIterator[str]:
+    """LM Studio に投げて生のテキスト delta を yield する (async)。
+    model 省略時は現在のモデル (get_model())。長いタスクは開始時にスナップショットを渡すこと。"""
     stream = await async_client.chat.completions.create(
-        model=MODEL,
+        model=model or _current_model,
         messages=messages,
         temperature=temperature,
         stream=True,

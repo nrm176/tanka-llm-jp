@@ -13,10 +13,12 @@ import {
   getActiveTask,
   getSession,
   listFailures,
+  listModels,
   listSessions,
   normalizeMessage,
   splitHarmony,
   streamTask,
+  switchModel,
 } from './api.js'
 
 marked.setOptions({ breaks: true, gfm: true })
@@ -328,6 +330,75 @@ function FailuresPanel({ onClose }) {
   )
 }
 
+// ───── モデル切替 (#15) ─────
+// 自己完結コンポーネント (AppInner の hook 宣言順に影響を与えない — §フック TDZ 罠の回避)。
+// 切替は新規タスクから有効。実行中タスクは開始時のモデルで走り切る (backend 側で保証)。
+
+function ModelSelector() {
+  const [models, setModels] = useState(null)   // {current, default, available[]} | null
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const refresh = useCallback(async () => {
+    try {
+      setModels(await listModels())
+      setErr(null)
+    } catch (e) {
+      setErr(e.message)
+    }
+  }, [])
+
+  useEffect(() => { refresh() }, [refresh])
+
+  const onChange = async (e) => {
+    const model = e.target.value
+    if (!models || model === models.current) return
+    setBusy(true)
+    try {
+      await switchModel(model)
+      await refresh()
+    } catch (e2) {
+      setErr(e2.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (err) {
+    return (
+      <div className="model-selector">
+        <div className="model-selector-error" title={err}>モデル取得失敗</div>
+        <button className="model-selector-retry" onClick={refresh}>再試行</button>
+      </div>
+    )
+  }
+  if (!models) return null
+
+  return (
+    <div className="model-selector">
+      <label className="model-selector-label" htmlFor="model-select">モデル</label>
+      <select
+        id="model-select"
+        value={models.current}
+        onChange={onChange}
+        disabled={busy}
+        title="生成に使うモデル。切替は次の生成から有効"
+      >
+        {/* current が available に無いケース (LM Studio 側で消えた等) も表示は維持する */}
+        {!models.available.includes(models.current) && (
+          <option value={models.current}>{models.current} (未検出)</option>
+        )}
+        {models.available.map((m) => (
+          <option key={m} value={m}>{m}{m === models.default ? ' (既定)' : ''}</option>
+        ))}
+      </select>
+      <div className="model-selector-hint">
+        未ロードのモデルは初回生成時にロードが走り遅くなることがあります
+      </div>
+    </div>
+  )
+}
+
 // ───── Sidebar ─────
 
 function Sidebar({ sessions, activeId, onSelect, onCreate, onDelete }) {
@@ -360,6 +431,7 @@ function Sidebar({ sessions, activeId, onSelect, onCreate, onDelete }) {
           )
         })}
       </div>
+      <ModelSelector />
     </aside>
   )
 }
