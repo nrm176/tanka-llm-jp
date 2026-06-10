@@ -65,6 +65,7 @@ RULE_WEIGHTS: dict[str, int] = {
     "kireji_absent":         _env_int("TANKA_W_KIREJI_ABSENT", 3),     # B5a+B5c: 句切れ・体言止め
     # お題との整合 (theme-aware)
     "theme_time_mismatch":   _env_int("TANKA_W_THEME_TIME_MISMATCH", 25),  # 夕暮れのお題に朝 等
+    "theme_time_uncovered":  _env_int("TANKA_W_THEME_TIME_UNCOVERED", 5),  # お題の時刻が本文に皆無 (欠如)
 }
 
 
@@ -282,7 +283,7 @@ _SEASON_LABEL_WORDS = {"春", "夏", "秋", "冬", "新年"}
 _TIME_BANDS: list[tuple[str, list[str]]] = [
     ("朝", ["朝", "朝光", "朝日", "朝空", "朝靄", "曙", "暁", "夜明け", "あけぼの", "しののめ", "東雲"]),
     ("昼", ["昼", "真昼", "日中", "白昼", "正午"]),
-    ("夕", ["夕", "夕暮", "夕焼", "夕映", "夕日", "夕闇", "黄昏", "たそがれ", "暮れ"]),
+    ("夕", ["夕", "夕暮", "夕焼", "夕映", "夕日", "夕闇", "黄昏", "たそがれ", "暮れ", "茜", "入日"]),
     ("夜", ["夜", "夜半", "夜更け", "真夜中", "深夜", "宵", "月夜"]),
 ]
 
@@ -315,6 +316,27 @@ def _check_theme_time(t: Tanka, theme: str) -> list[Violation]:
         "theme_time_mismatch", "critical", _w("theme_time_mismatch"),
         f"お題は時間帯「{theme_names}」を指しているのに、短歌は「{body_names}」の情景になっています。"
         f"お題の時刻に合わせて詠み直してください。"
+    )]
+
+
+def _check_theme_time_uncovered(t: Tanka, theme: str) -> list[Violation]:
+    """お題が時間帯 (夕暮れ・朝・夜 等) を明示しているのに、短歌の本文に時刻を感じさせる語が
+    一切無い場合に minor で軽く促す。theme_time_mismatch が「矛盾」を見るのに対し、こちらは
+    「欠如」を見る (お題の場面設定を完全に無視したケースの穴埋め。6a24d988 で踏んだ穴)。
+
+    短歌はイメージで時刻を暗示することも多いため、誤検出を避けて低 weight (minor) に留め、
+    本文に何らかの時刻語があれば (矛盾の有無は mismatch 側の管轄) ここでは発火しない。"""
+    theme_bands = _detect_time_bands(theme)
+    if not theme_bands:
+        return []  # お題に時刻指定なし
+    body = "".join(line.body for line in t.lines)
+    if _detect_time_bands(body):
+        return []  # 何らかの時刻語あり → 欠如ではない
+    theme_names = "・".join(_TIME_BANDS[i][0] for i in sorted(theme_bands))
+    return [_violation(
+        "theme_time_uncovered", "minor", _w("theme_time_uncovered"),
+        f"お題は時間帯「{theme_names}」を指していますが、短歌に時刻を感じさせる語が見当たりません。"
+        f"「{theme_names}」の光・空の色・影など、時刻が伝わる景物を一つ取り入れるとお題に忠実になります。"
     )]
 
 
@@ -498,6 +520,7 @@ def evaluate(
         ))
     if theme:
         violations.extend(_check_theme_time(t, theme))
+        violations.extend(_check_theme_time_uncovered(t, theme))
 
     score = max(0, 100 - sum(v.weight for v in violations))
     return ValidationResult(
@@ -596,6 +619,7 @@ LESSONS: dict[str, str] = {
     "season_matches_plan": "構想ステップで決めた季節を勝手に変更しない",
     "kigo_matches_plan": "構想ステップで決めた季語をそのまま使う",
     "theme_time_mismatch": "お題が指す時間帯 (夕暮れ・朝・夜 等) に合った情景を詠む",
+    "theme_time_uncovered": "お題が時間帯を指すときは、その時刻が伝わる景物 (光・空の色・影 等) を一つは詠み込む",
     "kigo_in_dictionary": "なるべく一般的に通用する季語を選ぶ",
     "mora_count": "拍数 5-7-5-7-7 を厳守する。漢字の現代読みでも数えられるようにする",
     "mora_count_off_by_one": "字余り・字足らずは ±1 まで許容されるが、特に意図がなければ整える",
