@@ -173,10 +173,10 @@ production と同一パース（`stream_completion → split_harmony → parse_t
 | `rag_legacy`（旧・「春」裸） | **0/9** | **7/9** |
 | `rag_meta`（新・metadata-first） | 0/9 | 4/9 |
 
-**結論**: dynamic few-shot で主磁石を消した後は、RAG の春アンカーは legacy のままでも季ドリフト 0。
+**結論**: dynamic few-shot で主磁石を消した後は、RAG の春アンカーは現行整形のままでも季ドリフト 0。
 よって #1（RAG 春除外）は**ドリフト対策としては不要**。metadata-first は季の利点が無く、例の季語
-「夏の夜」を目立たせて**季語コピーをむしろ誘発**（legacy 7/9 > meta 4/9）したため**採用見送り**
-（`TANKA_RAG_METADATA_FIRST` 既定 OFF、コードは toggle 保持）。データ: `app/backend/eval/results/rag_framing_isolation.json`。
+「夏の夜」を目立たせて**季語コピーをむしろ誘発**したため**採用見送り**。実装と統制実験ハーネスは
+[issue #6](https://github.com/nrm176/tanka-llm-jp/issues/6) で削除済み（測定データはこの表に保存）。
 
 ---
 

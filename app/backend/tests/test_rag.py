@@ -88,35 +88,3 @@ def test_format_examples_includes_anti_plagiarism():
 
 def test_format_examples_empty():
     assert rag.format_examples([]) == ""
-
-
-# ── metadata-first 整形 (春アトラクター対策: 表層トークンを枠で中和する) ──
-
-def test_metadata_first_has_structured_frame():
-    poems = rag.retrieve("夏", "蛍", limit=2)  # exact miss → 夏 fallback (夏の夜は, 春過ぎて)
-    block = rag._format_metadata_first(poems)
-    assert "季=" in block and "季語=" in block   # メタデータが主役の枠
-    assert "剽窃" in block                        # 模倣防止は維持
-    assert any(p["author"] in block for p in poems)
-
-
-def test_metadata_first_disarms_off_season_token():
-    # 「春過ぎて…」(season=夏) は本文に「春」を含む → 無効化注釈が付くこと
-    haru = next(p for p in rag.CORPUS if p["text"].startswith("春過ぎて"))
-    block = rag._format_metadata_first([haru])
-    assert "夏の歌" in block      # 「これは夏の歌」と明示
-    assert "「春」" in block       # 春トークンを名指しで中和
-    assert "引っ張られず" in block
-
-
-def test_metadata_first_no_disarm_when_clean():
-    # 「夏の夜は…」(season=夏) は本文に異季の語が無い → 無効化注釈は付かない
-    natsu = next(p for p in rag.CORPUS if p["text"].startswith("夏の夜は"))
-    block = rag._format_metadata_first([natsu])
-    assert "引っ張られず" not in block
-
-
-def test_format_examples_dispatch_legacy_vs_meta_differ():
-    # 同じ歌でも legacy と metadata-first は異なる整形になる (A/B が成立する)
-    poems = rag.retrieve("夏", "蛍", limit=2)
-    assert rag._format_examples_legacy(poems) != rag._format_metadata_first(poems)
