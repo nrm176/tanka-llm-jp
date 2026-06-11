@@ -37,3 +37,6 @@ models/
 Thumbs.db
 
 node_modules/
+
+# Claude Code 作業ノート (CLAUDE.md §12) — コミットしない
+notes.md
