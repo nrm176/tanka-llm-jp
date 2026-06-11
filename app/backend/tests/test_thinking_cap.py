@@ -30,8 +30,9 @@ def _drain_phase(**kwargs):
 
 
 def test_default_cap_is_enabled():
-    # 既定 4096: 実測分布 (p50=387 / p90≈10k / p95≈20k chars) の censored tail を切る位置
-    assert config.MAX_COMPLETION_TOKENS == 4096
+    # 既定 8192 = 安全弁: A/B で 4096 は正常長考に課税 (合格率 -17pt) と判明したため、
+    # 観測分布の censored tail (真の暴走) だけを切る位置に置く
+    assert config.MAX_COMPLETION_TOKENS == 8192
 
 
 def test_phase_passes_cap_to_llm(monkeypatch):
