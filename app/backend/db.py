@@ -496,6 +496,7 @@ def tanka_record_from_message(
         "image": msg.get("image"),
         "emotion": msg.get("emotion"),
         "score": score if isinstance(score, int) else None,
+        "model": msg.get("model"),  # 生成モデル (#15 以降のデータ。旧データは None)
         "attempts": len(msg.get("validations") or []),
         "plateau_reached": bool(msg.get("plateau_reached")),
         "max_refines_reached": bool(msg.get("max_refines_reached")),

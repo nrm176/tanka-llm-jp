@@ -982,6 +982,7 @@ textarea:disabled { color: #999; }
 .tg-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 11px; }
 .tg-kigo { background: #eef5ea; color: #3a6b2a; border-radius: 999px; padding: 2px 8px; font-weight: 600; }
 .tg-season { background: #f0f0f0; color: #666; border-radius: 999px; padding: 2px 8px; }
+.tg-model { background: #eef0f7; color: #4a5a8a; border-radius: 999px; padding: 2px 8px; font-weight: 600; }
 .tg-score {
   color: #fff; border-radius: 999px; padding: 2px 8px;
   font-weight: 600; font-variant-numeric: tabular-nums;

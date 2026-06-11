@@ -18,6 +18,11 @@ function scoreClass(score) {
   return 'sc-low'
 }
 
+// "openai/gpt-oss-20b" → "gpt-oss-20b" (チップは短縮名、完全 ID は title で)
+function shortModel(model) {
+  return String(model).split('/').pop()
+}
+
 function TankaCard({ rec, onOpenSession }) {
   const lines = String(rec.tanka).split('\n')
   const unmet = typeof rec.score === 'number' && rec.score < PASS_THRESHOLD
@@ -32,6 +37,9 @@ function TankaCard({ rec, onOpenSession }) {
         <div className="tg-meta">
           {rec.kigo && <span className="tg-kigo">{rec.kigo}</span>}
           {rec.season && <span className="tg-season">{rec.season}</span>}
+          {rec.model && (
+            <span className="tg-model" title={`生成モデル: ${rec.model}`}>{shortModel(rec.model)}</span>
+          )}
           <span className={'tg-score ' + scoreClass(rec.score)}>{rec.score ?? '—'}</span>
           {unmet && (
             <span
@@ -72,6 +80,7 @@ export default function TankaGallery({ onOpenSession }) {
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
   const [season, setSeason] = useState('all')
+  const [model, setModel] = useState('all') // 'all' | 'none' (記録なし) | モデル ID
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('newest') // newest | oldest | score-desc | score-asc
 
@@ -89,9 +98,21 @@ export default function TankaGallery({ onOpenSession }) {
 
   useEffect(() => { reload() }, [reload])
 
+  // 読み込んだレコードに実在するモデルだけを絞り込み候補にする
+  const models = useMemo(() => {
+    const set = new Set((data?.items || []).map((r) => r.model).filter(Boolean))
+    return [...set].sort()
+  }, [data])
+  const hasUnknownModel = useMemo(
+    () => (data?.items || []).some((r) => !r.model),
+    [data],
+  )
+
   const records = useMemo(() => {
     let items = data?.items || []
     if (season !== 'all') items = items.filter((r) => r.season === season)
+    if (model === 'none') items = items.filter((r) => !r.model)
+    else if (model !== 'all') items = items.filter((r) => r.model === model)
     const q = query.trim()
     if (q) {
       items = items.filter((r) =>
@@ -106,7 +127,7 @@ export default function TankaGallery({ onOpenSession }) {
     else if (sort === 'score-desc') sorted.sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
     else if (sort === 'score-asc') sorted.sort((a, b) => (a.score ?? 101) - (b.score ?? 101))
     return sorted
-  }, [data, season, query, sort])
+  }, [data, season, model, query, sort])
 
   const avg = useMemo(() => {
     const scores = records.map((r) => r.score).filter((s) => typeof s === 'number')
@@ -150,6 +171,20 @@ export default function TankaGallery({ onOpenSession }) {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="本文・お題・季語で検索"
         />
+        {models.length > 0 && (
+          <select
+            className="tg-sort"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            title="生成モデルで絞り込み"
+          >
+            <option value="all">すべてのモデル</option>
+            {models.map((m) => (
+              <option key={m} value={m}>{shortModel(m)}</option>
+            ))}
+            {hasUnknownModel && <option value="none">記録なし (旧データ)</option>}
+          </select>
+        )}
         <select className="tg-sort" value={sort} onChange={(e) => setSort(e.target.value)}>
           <option value="newest">新しい順</option>
           <option value="oldest">古い順</option>
