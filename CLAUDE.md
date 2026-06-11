@@ -216,6 +216,22 @@ open http://localhost:5178                    # フロント
 - 対策にはモデルの fresh reload + run 間の間隔。**eval 中に診断 streaming を投げない** (load 上乗せで悪化)
 - 詳細は `app/backend/eval/FINDINGS.md §5`
 
+### 6.14 LM Studio の JIT ロードは context 8192 で載る (2026-06 に実測)
+
+- 未ロードモデルへの初回リクエストで JIT ロードが走ると **context 8192 + TTL 1h の既定値**で載り、
+  thinking モデルは全コールが "Context size has been exceeded" になる (eval が全滅した実例あり)
+- 対策: 生成前に `lms ps` で CONTEXT を確認し、`lms load <model> --context-length 32768` で**明示ロード**
+- UI からのモデル切替 (#15) 後の初回生成も同じ罠を踏む。詳細は `app/docs/thinking-runaway-postmortem.md §3`
+
+### 6.15 無人 eval はホストのスリープで全滅する (2026-06 に実測)
+
+- overnight eval 中にアイドルスリープ + **Thermal Emergency 強制スリープ** (LLM 持続負荷で発熱) が発生し、
+  プロセス凍結 → 再開時に read timeout (§6.11) が連鎖発火して 12 題中 9 題が失敗した
+- 対策: 無人実行は **`caffeinate -dims` でラップ必須**。熱緊急は caffeinate でも防げないため日中実行が望ましい
+- 長時間スクリプトの停止は pkill でなく **PID ファイル** (`echo $$ > x.pid` → `kill $(cat x.pid)`) で行う
+  (相対パス起動に pkill パターンが不一致でキューが生き残り、二重実行で測定を汚染した実例あり)
+- 顛末は `app/docs/thinking-runaway-postmortem.md §3`
+
 ---
 
 ## 7. 設計上の重要な決定 (覆さないように)
