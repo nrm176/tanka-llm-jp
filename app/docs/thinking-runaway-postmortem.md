@@ -108,6 +108,13 @@ eval A/B が完走するまでに踏んだ環境障害。**すべて再発しう
   PID ファイル停止 / アーム毎の fresh reload + 専用バックエンド (パッチは /tmp 作業コピーで検証済み。
   本体 eval.sh への反映は別 issue 推奨)
 
+### 追記 (2026-06-11): 病理はモデル非依存
+
+qwen3-swallow-30b-a3b (thinking RL 変種) への切替検証で、**同じ自己検証暴走が 30B でも再現**した。
+しかも qwen では LM Studio が思考を `reasoning_content` に分離するため、`</think>` 不到達 =
+**content 完全空 → 全 attempt schema_invalid** という、より深刻な形で現れる。
+診断の顛末と推奨される選択肢は [model-compat-qwen3-swallow.md](./model-compat-qwen3-swallow.md)。
+
 ## 6. 教訓
 
 1. **採用判断は必ず数値で**。4096 は分布から導いた「もっともらしい」値だったが、実測は有害だった
