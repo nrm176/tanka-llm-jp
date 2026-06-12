@@ -130,3 +130,21 @@ PY
 
 判定基準: `content == 0 かつ finish == "length"` なら think 不到達型の不適合。
 `content > 0` なら互換 (UI の思考表示だけが空になる)。
+
+## 7. 追記 (2026-06-11): 在庫モデルのプローブ結果と復旧
+
+推奨①の実行として手元の全モデルをプローブした結果:
+
+| モデル | 型 | compose プローブ | 判定 |
+|---|---|---|---|
+| qwen3-swallow-30b-a3b-rl | thinking (分離型) | reasoning 17.0k / content 0 / length | **不適合** |
+| google/gemma-4-26b-a4b-qat | thinking (分離型・小タスクは完走) | reasoning 17.3k / content 0 / length | **不適合** (本タスクで発散) |
+| llm-jp-4-8b-thinking | thinking (harmony in content) | — | 互換 (既定。暴走は #23 の弁で bound) |
+| openai/gpt-oss-20b | thinking (harmony in content・思考を閉じる) | — | **互換実証**: 本件の失敗お題で score 94 を生成し復旧確認 |
+
+- **在庫に真の non-thinking モデルは無かった** (gemma-4 世代も hybrid thinking)。
+  「このタスクは thinking を持つあらゆるモデルの自己検証を発散させうる」が再確認された
+- 即時の復旧は gpt-oss-20b 固定セッションで達成 (cap 8192 稼働下、2 attempts / 94 点)
+- 日本語特化 × non-thinking を求める場合はダウンロードが必要
+  (候補: Qwen3-30B-A3B-Instruct-2507 = 同アーキの非 thinking 兄弟、Swallow の Instruct 変種)。
+  既定モデルとしての採用判断は eval ハーネスの A/B が必須
