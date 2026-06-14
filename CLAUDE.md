@@ -232,6 +232,16 @@ open http://localhost:5178                    # フロント
   (相対パス起動に pkill パターンが不一致でキューが生き残り、二重実行で測定を汚染した実例あり)
 - 顛末は `app/docs/thinking-runaway-postmortem.md §3`
 
+### 6.16 thinking RL 系モデルは compose で think を閉じず空出力になる (2026-06 に実測)
+
+- qwen3-swallow (thinking RL 変種) へ切替えたところ、短歌 compose プロンプトが thinking 暴走を誘発し、
+  `</think>` 不到達のまま予算を使い切って **content が完全に空** → 全 attempt が schema_invalid になった
+- LM Studio は Qwen3 系の思考を `reasoning_content` に分離する (アプリは content のみ読む)。
+  この組では UI の思考表示も空になる。`/no_think` は RL 変種には効かない
+- thinking 暴走の病理 (§6.14 の postmortem) は**モデル非依存** — 8B でも 30B でも再現する
+- **検証器が外部にある本パイプラインには non-thinking (Instruct) 変種を選ぶこと**。
+  診断手順と推奨は `app/docs/model-compat-qwen3-swallow.md`
+
 ---
 
 ## 7. 設計上の重要な決定 (覆さないように)
