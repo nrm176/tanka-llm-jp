@@ -1,9 +1,10 @@
 # モデル特性カタログ — 短歌生成パイプラインにおける各 LLM の強み・弱み
 
 > 最終更新: 2026-06-14 / 測定: tanka-eval-ablation スキルの作法に準拠
-> 関連: [model-compat-qwen3-swallow.md](./model-compat-qwen3-swallow.md) /
+> 関連: **[design-principle-verifier-in-the-loop.md](./design-principle-verifier-in-the-loop.md) (本書が実証する設計原則)** /
+> [model-compat-qwen3-swallow.md](./model-compat-qwen3-swallow.md) /
 > [thinking-runaway-postmortem.md](./thinking-runaway-postmortem.md) /
-> `app/backend/eval/FINDINGS.md` §6 / CLAUDE.md §6.13〜6.16
+> `app/backend/eval/FINDINGS.md` §6 / CLAUDE.md §6.13〜6.16, §7
 
 このパイプラインは LM Studio 上のローカル LLM を差し替え可能 (#15 グローバル切替 / #20 セッション固定)。
 本書は手元で試した全モデルの特性を**指標に基づいて**集約し、用途別の選択指針を与える
