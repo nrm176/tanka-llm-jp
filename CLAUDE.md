@@ -258,6 +258,7 @@ open http://localhost:5178                    # フロント
 | Plan/Compose 整合性は **validator ルール** で強制 | プロンプトで願うだけでは 8B には効かない |
 | 長期失敗記憶は **季節フィルタ** + LESSONS で教訓化 | 関係ない失敗を混ぜると逆効果。"これをやるな" を明示するほうが効く |
 | **graceful shutdown** に lifespan + stop_grace_period 30s | LLM の partial save に余裕を確保 |
+| モデル選定は **「閉じる thinking か非-thinking」を優先**し、ベンチの素の実力で選ばない | 外部 validator + refine がある設計では、モデル内 thinking は二重に無駄で暴走の元。検証は機械に任せ、モデルには速いドラフト + 応答性のみ求める。実証で素の実力と最終品質の順位が反転した (`app/docs/design-principle-verifier-in-the-loop.md`) |
 
 ---
 
