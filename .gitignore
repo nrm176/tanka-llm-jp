@@ -40,3 +40,9 @@ node_modules/
 
 # Claude Code 作業ノート (CLAUDE.md §12) — コミットしない
 notes.md
+
+# skill-creator のベンチ作業場 (再生成可能なスクラッチ。版管理しない)
+.claude/skills/*-workspace/
+
+# プロセス ID (ephemeral)
+*.pid
