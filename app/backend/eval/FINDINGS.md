@@ -192,3 +192,54 @@ B(sc-off)  前半8=83.3  後半8=76.3   ← 後半 7 点低下のみ
 | 重みの較正 | 人間評価ラベル + grid search | hand-tuned 重みは妥当か |
 
 **前提**: variance（§2）を踏まえ、どの実験も **ノイズ幅を超える差のみ** を有意と判定すること。
+
+---
+
+## 6. モデル A/B: gemma-3-27b vs llm-jp-4-8b-thinking (2026-06-14)
+
+**問い**: non-thinking の google/gemma-3-27b を既定モデルに採用すべきか
+(背景: qwen3-swallow 不適合インシデント `app/docs/model-compat-qwen3-swallow.md` 推奨①)。
+**設計**: 四季×3=12題 (`eval_themes_x12.json`)、各アーム fresh load(32k)+切替検証、caffeinate 下。
+**事前登録判定基準**: 主指標 avg_final_score、n=12 ノイズ下限 ±5.6、|Δ|≤5.6 は判定不能。
+
+| 指標 | llm-jp | gemma-3-27b | 判定 |
+|---|---|---|---|
+| **avg_final_score** | 77.17 | 80.00 | **+2.83 → ノイズ内 (判定不能)** |
+| 総合合格率 | 83.3% | 83.3% | 同 |
+| 初回合格率 | 75.0% | 41.7% | gemma 劣 (有意) |
+| 平均 attempt | 1.58 | 3.00 | gemma 約2倍 (有意) |
+| 違反総数 (全attempt) | 31 (crit9/min22) | **179** (crit56/maj6/min117) | gemma 約6倍 |
+| └ mora 系 (count+off_by_one) | 6 | **88** | gemma 圧倒的に弱い |
+| └ kigo 規律 (no_other+in_dict) | 1 | **57** | gemma 弱い |
+| └ schema_invalid | 9 | **0** | gemma 勝 (thinking 暴走なし) |
+| 90-100 点の歌 | 6 | 3 | llm-jp 優 |
+| 所要時間 (12題) | ~50分 | **~14分** | gemma 約3.5倍速 |
+
+**劣化交絡チェック**: 両アームとも後半≥前半 (llm-jp 59.7→94.7、gemma 75.3→84.7)。沈み込みなし=測定有効。
+
+**結論 (判定不能 + 二次指標の明確な差)**:
+- **主指標 avg_final_score は +2.83 でノイズ内 → gemma は品質で llm-jp を上回らない**
+- ただし二次指標 (イベント count、ノイズではない) は明確: gemma は **拍数 (88 vs 6)・季語規律 (57 vs 1)**
+  という**短歌特有スキルで決定的に弱く**、同じ合格率に達するのに約2倍の refine を要し、best-of-N が
+  より多くの試行から拾うことで final score の見かけ上の同点が成立している。90-100 の名歌は llm-jp が倍
+- 故障モードが相補的: **llm-jp = 一発精度高いが稀に thinking 暴走で 0 点** /
+  **gemma = 暴走なし・高速だが拍数/季語が雑で validator に依存して 80 点台に滑り込む**
+
+**採否**: **既定は llm-jp 継続**。gemma-3-27b は #20/#21 の**セッション固定モデルとして残す**
+(高速ドラフト用途・llm-jp の暴走が問題な場面の代替)。両者は補完関係であり置換ではない。
+
+### 6.1 追試: gpt-oss-20b を加えた 3モデル統制比較 (2026-06-14)
+
+同一 `eval_themes_x12.json` で gpt-oss-20b を測定し 3モデル確定:
+
+| model | avg | first-pass | attempts | mora違反 | schema | zero率(観測) | 90-100 |
+|---|---|---|---|---|---|---|---|
+| llm-jp | 77.2 | **75%** | **1.58** | **6** | 9 | **17%** | 6 |
+| gemma-3-27b | 80.0 | 42% | 3.00 | 88 | 0 | 0% | 3 |
+| gpt-oss-20b | **84.5** | 8% | 3.42 | 135 | 1 | 0% | 6 |
+
+**発見**: avg 順位 (gpt-oss>gemma>llm-jp) が素の実力順位 (llm-jp≫gemma>gpt-oss) を**反転**。
+validator-guided best-of-N では最終品質 = refine 応答性 × 無事故性であり、一発の上手さではない。
+gpt-oss avg +7.3 (vs llm-jp) はノイズ下限 ±5.6 超だが、(a) 単一 run (b) gpt-oss は後半低下
+(89.3→79.7) のため確認 run 推奨。**llm-jp の質の天井 (zero 除く 10 首 ~92.6) は依然最高**。
+詳細・選択指針は `app/docs/model-characteristics.md`。
