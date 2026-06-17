@@ -1,0 +1,21 @@
+diff --git a/app/backend/eval/README.md b/app/backend/eval/README.md
+index aa05c4b..bbed1cb 100644
+--- a/app/backend/eval/README.md
++++ b/app/backend/eval/README.md
+@@ -85,6 +85,16 @@ backend コンテナの環境変数でパイプライン挙動を変えられる
+ 
+ 重みの環境変数名は `validator.py` の `RULE_WEIGHTS` を参照。
+ 
++> **⚠ passthrough の罠**: backend はコンテナ内で動くため、シェルの環境変数は
++> `docker-compose.yml` の `backend.environment` に **明示列挙された変数しかコンテナに届かない**。
++> `TANKA_PASS_THRESHOLD` / `TANKA_W_<RULE>` は既定では列挙されておらず、
++> `TANKA_W_X=… docker compose up -d backend` としても **無言でコード既定値のまま** になる
++> (A/B のつもりが同条件 vs 同条件の noise 測定に化ける)。実験前に compose へ
++> `TANKA_W_X: ${TANKA_W_X:-<コード既定>}` を追記し、起動後に
++> `docker compose exec backend uv run python -c "import validator; print(validator.RULE_WEIGHTS['<rule>'])"`
++> で実効値を必ず確認すること。なお env 変更の反映は `docker compose restart` では効かず、
++> `docker compose up -d backend` (コンテナ再作成) が必要。
++
+ ### アブレーション例
+ 
+ 各コンポーネントの寄与を測る:

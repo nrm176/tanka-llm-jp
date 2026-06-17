@@ -56,7 +56,8 @@ curl -s http://localhost:8001/api/health | python3 -m json.tool
    - subset は `app/backend/eval/` 内にファイルとして置く (`/tmp` は消えて再現不能になる)。
      **before/after は必ず同一ファイル**。結果 JSON の `_themes_file` が一致しない比較は無効
    - 所要時間: 1 お題 30 秒〜2 分。50 お題で variant あたり 25〜60 分。試行錯誤段階は 8 お題 subset、
-     採否の最終判断は 50 お題が目安
+     採否の最終判断は 50 お題が目安。**実験の重さは判断の重さに合わせる** (好奇心の sanity check に
+     paired 50 題 ×2 を組まない。逆に merge の採否を 8 題 1 run で断定しない)
 4. **判定基準**: 上のノイズ下限表から該当行を引用し「±X を超えたら採用」と宣言する
 5. **交絡対策**:
    - **LM Studio 劣化**: variant ごとに fresh reload。blocked A/B (A を全部→B を全部) は
@@ -65,6 +66,12 @@ curl -s http://localhost:8001/api/health | python3 -m json.tool
    - **長期失敗記憶の順序効果**: `failures` コレクションは run をまたいで蓄積し、後で走る variant が
      先行 run の教訓の恩恵を受ける。厳密にやるなら各 variant 直前に `curl -X DELETE
      http://localhost:8001/api/failures` でリセットする (蓄積記憶が消えるため、実行前にユーザーに一言確認)
+6. **重み・しきい値を変える実験の特例**: `TANKA_W_*` / `TANKA_PASS_THRESHOLD` の変更は
+   **スコアの物差し自体を変える**ため、`avg_final_score` や合格率を arm 間で直接比較しても無効
+   (同じ歌でも点が変わる)。主要指標は (a) 最終成果物における当該違反の**残存率**、または
+   (b) **共通重み (変更前の重み) で再採点**したスコアにする。さらに長期失敗記憶の lesson は
+   最大 weight の違反から優先的に選ばれるため、重み変更は記憶の内容にも交絡する —
+   この種の実験では上記の failures リセットを必ず実施する
 
 ## Step 2 — 変更の適用 (事故多発点)
 
@@ -89,6 +96,10 @@ curl -s http://localhost:8001/api/health | python3 -m json.tool
   ```bash
   docker compose exec backend printenv | grep TANKA
   ```
+
+  生成挙動を変える switch (例: self-critique) は、保存メッセージの `phases` に当該フェーズが
+  現れるかで **per-generation の事後検証**もできる (per-phase 永続化 #18)。「env が効いていなかった」
+  事故を測定後からでも検出できる保険になる
 
 ## Step 3 — 実行
 

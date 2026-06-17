@@ -1,0 +1,13 @@
+diff --git a/app/backend/validator.py b/app/backend/validator.py
+index 1234567..abcdefg 100644
+--- a/app/backend/validator.py
++++ b/app/backend/validator.py
+@@ -58,7 +58,7 @@ RULE_WEIGHTS: dict[str, int] = {
+     # minor
+     "no_other_kigo_same":    _env_int("TANKA_W_NO_OTHER_KIGO_SAME", 25),
+     "kigo_in_dictionary":    _env_int("TANKA_W_KIGO_IN_DICTIONARY", 5),
+-    "repeated_word":         _env_int("TANKA_W_REPEATED_WORD", 3),
++    "repeated_word":         _env_int("TANKA_W_REPEATED_WORD", 12),
+     "mora_count_disputed":   _env_int("TANKA_W_MORA_DISPUTED", 3),
+     # 新規 (Phase 1)
+     "mora_count_off_by_one": _env_int("TANKA_W_MORA_OFF_BY_ONE", 3),   # B5b: 字余り/字足らず

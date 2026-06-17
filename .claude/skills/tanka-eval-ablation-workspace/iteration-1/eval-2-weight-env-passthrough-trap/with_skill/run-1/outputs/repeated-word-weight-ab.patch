@@ -1,0 +1,77 @@
+--- a/app/docker-compose.yml
++++ b/app/docker-compose.yml
+@@ -64,6 +64,9 @@
+       TANKA_RAG: ${TANKA_RAG:-1}
+       TANKA_HARD_CAP: ${TANKA_HARD_CAP:-50}
+       TANKA_PLATEAU_WINDOW: ${TANKA_PLATEAU_WINDOW:-3}
++      # validator ルール重みの passthrough (repeated_word 重み A/B 実験用)。
++      # 既定値は validator.py の _env_int("TANKA_W_REPEATED_WORD", 3) と必ず一致させること
++      TANKA_W_REPEATED_WORD: ${TANKA_W_REPEATED_WORD:-3}
+     extra_hosts:
+       # Linux でも host.docker.internal が解決されるように
+       - "host.docker.internal:host-gateway"
+--- /dev/null
++++ b/app/backend/eval/eval_themes_quick8.json
+@@ -0,0 +1,62 @@
++{
++  "_comment": "8 お題パイロット subset (TANKA_W_REPEATED_WORD 3→12 A/B の smoke / 所要時間見積もり用)。eval_themes.json から verbatim 抽出: 四季×2、classical/modern×4、concrete/abstract×4。採否の本判定には eval_themes.json (full 50) を使うこと。before/after は必ず同一ファイル。",
++  "_version": 1,
++  "themes": [
++    {
++      "id": "spr-01",
++      "season_hint": "春",
++      "register": "classical",
++      "concreteness": "concrete",
++      "theme": "散りゆく桜"
++    },
++    {
++      "id": "spr-04",
++      "season_hint": "春",
++      "register": "modern",
++      "concreteness": "abstract",
++      "theme": "新生活への不安と希望"
++    },
++    {
++      "id": "sum-03",
++      "season_hint": "夏",
++      "register": "modern",
++      "concreteness": "concrete",
++      "theme": "海辺の街を見下ろす坂道"
++    },
++    {
++      "id": "sum-07",
++      "season_hint": "夏",
++      "register": "classical",
++      "concreteness": "abstract",
++      "theme": "涼風に覚える秋の予感"
++    },
++    {
++      "id": "aut-06",
++      "season_hint": "秋",
++      "register": "modern",
++      "concreteness": "concrete",
++      "theme": "落ち葉を踏みしめる帰り道"
++    },
++    {
++      "id": "aut-07",
++      "season_hint": "秋",
++      "register": "classical",
++      "concreteness": "abstract",
++      "theme": "虫の音に聞く命の儚さ"
++    },
++    {
++      "id": "win-01",
++      "season_hint": "冬",
++      "register": "classical",
++      "concreteness": "concrete",
++      "theme": "降りしきる雪"
++    },
++    {
++      "id": "win-08",
++      "season_hint": "冬",
++      "register": "modern",
++      "concreteness": "abstract",
++      "theme": "終電を待つホームの寒さと孤独"
++    }
++  ]
++}

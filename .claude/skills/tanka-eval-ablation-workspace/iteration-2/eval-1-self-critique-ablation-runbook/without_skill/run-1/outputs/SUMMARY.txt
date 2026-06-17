@@ -1,0 +1,269 @@
+================================================================================
+  Self-Critique 効果測定実験 — 完全実行キット (without_skill 版)
+================================================================================
+
+【概要】
+
+このディレクトリには、短歌生成パイプラインの self-critique フェーズが品質に
+効いているかを測定するための **完全な無人実行可能な手順書** が含まれています。
+
+前回の実験 (2026-06-04) では n=16 テーマでノイズ幅 ±4.8 により判定が不能でしたが、
+今回は n=50 テーマでノイズ幅を ±2.7 に縮小し、より確実な判定を目指しています。
+
+【ドキュメント構成】
+
+  1. README.md (10 分読み)
+     └─ 実験全体のガイダンス、判定基準の概要、実行前チェックリスト
+
+  2. EXPERIMENT_DESIGN.md (10 分読み + 実行前確認)
+     └─ 実験設計の詳細、仮説、交絡対策、測定指標
+     └─ 最重要: 交絡変数 (LM Studio 劣化、失敗記憶) への対策
+
+  3. RUNBOOK.md (実行当日に従う)
+     └─ Step 0-8 のコピペ手順書
+     └─ 全コマンドが完全に記載されている（何も追加で考える必要はない）
+     └─ トラブルシューティング付き
+
+  4. JUDGMENT_CRITERIA.md (実験完了後に参照)
+     └─ 結果の統計的解釈方法
+     └─ ケース分類と判定フロー
+     └─ テンプレート式の判定レポート作成方法
+
+  5. CHECKLIST.md (当日に持参)
+     └─ 紙版チェックリスト（印刷推奨）
+     └─ タイムスタンプ記録欄付き
+
+  6. SUMMARY.txt (このファイル)
+     └─ 全体構成の要約、参考資料リスト、実行フロー図
+
+【実行フロー】
+
+  1. 事前準備 (数日前)
+     ☐ README.md を読み、全体を理解する
+     ☐ EXPERIMENT_DESIGN.md で交絡対策を精読する
+     ☐ CHECKLIST.md を印刷する
+
+  2. 実験当日 (夜間無人実行想定, 2-3.5 時間)
+     ☐ RUNBOOK.md の「Pre-flight チェック」から開始
+     ☐ Step 0-8 をコピペで実行
+     ☐ 完了したら JUDGMENT_CRITERIA.md で結果を判定
+
+  3. 実験完了後
+     ☐ 判定テンプレートに結果を記入
+     ☐ notes.md に記録
+     ☐ 必要に応じてコード修正 (TANKA_SELF_CRITIQUE デフォルト値など)
+
+【核となる判定基準】
+
+  ノイズ下限: ±2.7 点 (n=50 テーマ)
+
+  出典: FINDINGS.md §2 の実測から導出
+    - スコアは確率変数 (best-of-N sampling のため)
+    - 同一テーマ × 6 run での実測 stdev ≈ 9.6
+    - SE = 9.6 / √50 ≈ 1.36
+    - 2SE (95% CI) ≈ 2.7
+
+  判定ルール:
+    |観測差| > 2.7 ⇒ 有意と判定
+    |観測差| ≤ 2.7 ⇒ ノイズ内，判定不能
+
+【主要な交絡対策】
+
+  1. LM Studio Sustained-Load 劣化 (CLAUDE.md §6.13)
+     ┗ 対策: 各 variant 前に LM Studio を fresh reload
+            (lms unload → lms load ... --context-length 32768)
+
+  2. 長期失敗記憶の順序効果
+     ┗ 対策: 各 variant 前に failures を リセット
+            (curl -X DELETE http://localhost:8001/api/failures)
+
+  3. UI による Configured Model 切替
+     ┗ 対策: /api/health で確認し、必要に応じて UI で選択し直す
+
+  4. 前半/後半の大逆転（劣化検査）
+     ┗ 対策: 結果ファイルから前半と後半のスコアパターンを確認
+            大きな乖離が見られたら、その run は不採用
+
+【実験のパラメータ】
+
+  テーマセット:      eval_themes.json (50 テーマ, 四季・古典現代・抽象具体のバランス)
+  モデル:           llm-jp-4-8b-thinking
+  Context:          32768 (デフォルト 8192 では context 超過でアウト)
+  独立変数:         TANKA_SELF_CRITIQUE (1 = ON, 0 = OFF)
+  測定指標:         avg_final_score (主要), first_attempt_pass_rate, avg_attempts, etc
+
+  所要時間:         2-3.5 時間 (1 テーマ = 30s-2min, 50×2 arm + 中間処理)
+  推奨実行時刻:     22:00-01:00 (夜間, LM Studio 負荷が低い)
+
+【期待される結果パターン】
+
+  A. SC-ON が有効 (|Δ| > 2.7, Δ < 0)
+     ┗ Self-critique フェーズを保持
+     ┗ +1 call のコストは正当化される
+
+  B. SC-OFF が有効 / SC-ON が有害 (|Δ| > 2.7, Δ > 0)
+     ┗ TANKA_SELF_CRITIQUE を 0 に変更
+     ┗ Self-critique はむしろ品質を悪化させている
+
+  C. 判定不能 (|Δ| ≤ 2.7)
+     ┗ N=50 でもなお有意差が出ない
+     ┗ Paired repeated measure や異なるモデルでの再測定が必要
+
+  D. LM Studio 劣化あり (前半/後半で |差| > 10)
+     ┗ この run は採用不可
+     ┗ Fresh reload の手法見直し、再実験推奨
+
+【コード上の実装位置】
+
+  Self-Critique フェーズの実装:
+    ├─ tanka.py L216-227
+    │  └─ if config.SELF_CRITIQUE_ENABLED: ...
+    │
+    ├─ config.py L47
+    │  └─ SELF_CRITIQUE_ENABLED = env_bool("TANKA_SELF_CRITIQUE", True)
+    │
+    ├─ prompts.py L220-228
+    │  └─ SELF_CRITIQUE_USER = "上記の短歌について自己点検してください..."
+    │
+    └─ docker-compose.yml L62
+       └─ TANKA_SELF_CRITIQUE: ${TANKA_SELF_CRITIQUE:-1}
+
+【参考資料（詳細を知る場合）】
+
+  CLAUDE.md
+    §6.13  ┗ LM Studio sustained-load 劣化（環境制約）
+    §6.14  ┗ Context 8192 での JIT ロード失敗（32768 を使う理由）
+    §12    ┗ notes.md 運用ルール（実験ログの記録方法）
+
+  FINDINGS.md
+    §2     ┗ スコアは確率変数（ノイズ下限表，平均の標準誤差）
+    §5.5   ┗ 前回 sc-on/sc-off 実験（失敗から学ぶ教訓）
+
+  Codebase
+    /Users/nrm176p/GitHub2/LLM/app/backend/tanka.py
+      ┗ パイプライン全体の実装
+
+    /Users/nrm176p/GitHub2/LLM/app/backend/validator.py
+      ┗ スコアリング・ルール定義
+
+    /Users/nrm176p/GitHub2/LLM/app/backend/eval/eval.sh
+      ┗ 評価ハーネス（このスクリプト自体が実験の エンジン）
+
+【よくある質問（FAQ）】
+
+  Q. なぜ context を 32768 にするのか?
+  A. Llm-jp-4-8b-thinking は thinking + output で最大 32k context を使う。
+     デフォルト 8192 では context 超過で全テーマが失敗する (CLAUDE.md §6.14)。
+
+  Q. Failures リセットは何をしているか?
+  A. 長期失敗記憶の蓄積による順序効果を除去。MongoDB の failures コレクションを
+     削除し、両 arm が「同等の教訓状態」で走るようにする。
+
+  Q. 前半/後半の劣化チェックはなぜ必要か?
+  A. LM Studio は sustained load 下で性能が劣化する。前回の実験で前半と後半で
+     符号が逆転したため（ON 優位 → OFF 優位），劣化の検査が必須になった。
+
+  Q. ノイズ幅 ±2.7 はどこから来たのか?
+  A. FINDINGS.md §2 で実測した stdev ≈ 9.6 から統計的に導出。
+     SE = 9.6 / √50 ≈ 1.36, 2SE ≈ 2.7。
+
+  Q. 観測差がノイズ幅と同じ（例: Δ = 2.7）だったら?
+  A. ギリギリの場合は「有意」と判定することもできるが，複数 run 平均を
+     取ることを推奨（その場合，少し保守的に判定する）。
+
+  Q. 再実験は何回必要か?
+  A. 最低 1 回（この runbook）。判定不能の場合は paired repeated measure や
+     異なるモデルでの再測定を検討（詳細は JUDGMENT_CRITERIA.md参照）。
+
+【トラブルシューティング概要】
+
+  症状: eval.sh が 10 分以上ハング
+  ┗ 原因: Backend stuck, LM Studio 応答なし
+  ┗ 対策: Backend / LM Studio ログを確認，必要に応じて再起動
+
+  症状: Health が "ok" でない
+  ┗ 原因: Backend / LM Studio が起動していない
+  ┗ 対策: docker ps, lms ps で確認，起動コマンドを実行
+
+  症状: Compare.sh で結果ファイルが見つからない
+  ┗ 原因: Eval.sh がまだ完了していない，またはファイル名が異なる
+  ┗ 対策: ls -la で確認，タイムスタンプを指定して直接比較
+
+  症状: 前半/後半で大きな乖離が見られた
+  ┗ 原因: LM Studio の sustained-load 劣化，または context 不足
+  ┗ 対策: Fresh reload の方法見直し，インターバル増加，再実験
+
+詳細は RUNBOOK.md の【トラブルシューティング】を参照。
+
+【実験後のアクション】
+
+  1. 判定結果を記録
+     ┗ JUDGMENT_CRITERIA.md のテンプレートに従って記入
+     ┗ notes.md に転記（セッション継続用）
+
+  2. コード修正（必要な場合）
+     ┗ SC-ON が有効: 現状維持（デフォルト 1）
+     ┗ SC-ON が有害: config.py L47 で デフォルト値を 0 に変更
+     ┗ 判定不能: 様子見（追加実験検討）
+
+  3. ドキュメント更新
+     ┗ CLAUDE.md / FINDINGS.md に結果を追記
+     ┗ 教訓をまとめてプロジェクト継承
+
+【フローチャート（実行手順の全体図）】
+
+  START
+    ↓
+  Pre-flight チェック (Step 0)
+    ↓ [OK なら続行，NG なら修正]
+    ↓
+  LM Studio Fresh Reload (Step 1)
+    ↓
+  Failures リセット (Step 2)
+    ↓
+  ┌─ Backend を sc-ON で起動 (Step 3.1)
+  │   ↓
+  │ eval.sh sc-on を実行 (Step 3.3)  ← 45-90 分待機
+  │   ↓
+  └─ 結果: results/<ts>-sc-on.json
+    ↓
+  LM Studio Fresh Reload (Step 4.1)
+    ↓
+  Failures リセット (Step 4.4)
+    ↓
+  ┌─ Backend を sc-OFF で起動 (Step 5.1)
+  │   ↓
+  │ eval.sh sc-off を実行 (Step 5.3)  ← 45-90 分待機
+  │   ↓
+  └─ 結果: results/<ts>-sc-off.json
+    ↓
+  Compare.sh で比較 (Step 6.1)
+    ↓
+  観測差を抽出 (Step 6.2)
+    ↓
+  JUDGMENT_CRITERIA.md で判定 (Step 6.3-6.4)
+    ↓
+  判定結果を記録 (Step 7)
+    ↓
+  END
+
+【最終チェックリスト（実行直前）】
+
+  ☐ Docker が起動している
+  ☐ Backend が起動している
+  ☐ LM Studio が起動している
+  ☐ Health check が OK
+  ☐ CHECKLIST.md を印刷した
+  ☐ notes.md を準備した
+  ☐ 実験の重要性を理解した（判定基準を読んだ）
+  ☐ RUNBOOK.md を手元に置いた
+
+すべて確認できたら，RUNBOOK.md の「Pre-flight チェック」から開始！
+
+================================================================================
+
+実験を頑張ってください。ご質問は README.md や EXPERIMENT_DESIGN.md を参照してください。
+
+Last Updated: 2026-06-13 07:15 UTC
+Version: 1.0 (without_skill edition)
+================================================================================
