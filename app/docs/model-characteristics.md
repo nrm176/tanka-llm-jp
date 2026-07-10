@@ -140,8 +140,11 @@ llm-jp は 75% を一発で決める最高のドラフターだが、**17% の�
   自己検証暴走を誘発 + `</think>` 不到達 → アプリが読む content が空のまま
 - **教訓**: thinking 暴走の病理は**モデル非依存** (8B でも 30B でも再現)。規模では解決しない
 
-### 3.5 未測定 (gemma-4-12b / gemma-4-e4b / nemotron-3-nano-omni)
+### 3.5 未測定 (gemma-4-12b / gemma-4-e4b / nemotron-3-nano-omni / llm-jp-4-8b-instruct)
 
+- **llm-jp-4-8b-instruct** ★移行の最有力候補: 現行既定の**非-thinking 兄弟** (SFT only・DPO なし)。
+  同族ゆえ日本語質の天井を保ったまま 17% 暴走を構造的に消せる見込み。**未測定**。
+  調査記録と導入パスは [model-migration-nonthinking-instruct.md](./model-migration-nonthinking-instruct.md)
 - **gemma-4-e4b** (7.5B): モデル切替検証で n=2 [79, 87] を産出 (互換の可能性)。要正式測定
 - **gemma-4-12b / nemotron-3-nano-omni**: 未テスト。gemma-4 系は 26b が不適合だったため
   12b も同型リスクあり。導入時は必ず §5 のプローブを先行させること
