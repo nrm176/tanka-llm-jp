@@ -10,8 +10,9 @@
 - GET    /api/sessions/{sid}/active-task   進行中タスクがあれば {task_id, kind} を返す
 
 - POST   /api/chat                 チャットタスク作成 → {task_id} を即返す (LLM はバックグラウンド)
-- POST   /api/tanka                短歌タスク作成 → {task_id}
+- POST   /api/tanka                短歌タスク作成 → {task_id} (manual_plan 指定で手動構想モード)
 - GET    /api/tanka/records        全セッション横断の短歌一覧 (新しい順)
+- GET    /api/kigo                 手動構想モード用: 季節 → 季語リスト
 - GET    /api/tasks/{tid}/stream   SSE: タスクのイベントストリーム (replay+ライブ)
 - POST   /api/tasks/{tid}/cancel   実行中タスクのキャンセル
 
@@ -117,12 +118,24 @@ class ChatRequest(BaseModel):
     mode: Literal["normal", "tanka"] = "normal"
 
 
+class ManualPlan(BaseModel):
+    """人間が立てた構想 (LLM Plan フェーズの差し替え)。指定されると Plan 生成をスキップし、
+    この 4 項目をそのまま compose に流す。季語/季節が固定されるため季ドリフトが原理排除され、
+    validator の season_matches_plan / kigo_matches_plan が厳格な整合制約として効く。"""
+    kigo: str = Field(..., min_length=1, max_length=20)     # 季語 (一つ)
+    season: Literal["春", "夏", "秋", "冬", "新年"]            # 季節 (季語必須のため雑は非対応)
+    image: str = Field(..., min_length=1, max_length=200)   # 情景 (一文)
+    emotion: str = Field(..., min_length=1, max_length=200) # 心情 (一文)
+
+
 class TankaRequest(BaseModel):
     session_id: str
     theme: str = Field(..., min_length=1)
     # None なら無制限 (plateau 検知のみ。最後の安全網は HARD_CAP=50)。
     # 数値を指定すると refine 回数の上限になる (旧来の固定回数挙動)。
     max_refines: int | None = Field(None, ge=0, le=500)
+    # 指定すると LLM Plan フェーズをスキップし、この構想で compose する (手動構想モード)
+    manual_plan: ManualPlan | None = None
 
 
 class CreateSessionRequest(BaseModel):
@@ -319,11 +332,25 @@ async def tanka_endpoint(req: TankaRequest) -> dict:
 
     # セッション実効モデル (#20) をタスク作成時に解決 (session.model > グローバル現在値)
     model = llm.effective_model(sess)
+    manual_plan = req.manual_plan.model_dump() if req.manual_plan else None
     db.append_message(req.session_id, {"kind": "user", "content": f"tanka:{req.theme}"})
-    task = db.create_task(req.session_id, kind="tanka", input_data={"theme": req.theme, "max_refines": req.max_refines, "model": model})
-    tasks.start_tanka(task["id"], req.session_id, req.theme, req.max_refines, model=model)
+    task = db.create_task(req.session_id, kind="tanka", input_data={
+        "theme": req.theme, "max_refines": req.max_refines, "model": model,
+        "manual_plan": manual_plan})
+    tasks.start_tanka(task["id"], req.session_id, req.theme, req.max_refines,
+                      model=model, manual_plan=manual_plan)
 
     return {"task_id": task["id"], "session_id": req.session_id, "kind": "tanka"}
+
+
+@app.get("/api/kigo")
+async def get_kigo() -> dict:
+    """手動構想モードの季語ドロップダウン用。季節ラベル → 季語リストを返す。"""
+    import json as _json
+    from pathlib import Path
+    _SEASON_LABEL = {"spring": "春", "summer": "夏", "autumn": "秋", "winter": "冬", "new_year": "新年"}
+    raw = _json.loads((Path(__file__).parent / "data" / "kigo.json").read_text(encoding="utf-8"))
+    return {label: raw.get(key, []) for key, label in _SEASON_LABEL.items()}
 
 
 # ─── Task streaming (SSE) ───

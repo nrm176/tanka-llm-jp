@@ -254,6 +254,17 @@ def build_plan_messages(theme: str) -> list[dict]:
     ]
 
 
+def format_manual_plan(mp: dict) -> str:
+    """人間が指定した構想を、LLM Plan フェーズと同一のテキスト形式に整形する (純関数)。
+    build_compose_messages / extract_season_from_plan がそのまま流用できる形にする。"""
+    return (
+        f"季語: {mp['kigo']}\n"
+        f"季節: {mp['season']}\n"
+        f"情景: {mp['image']}\n"
+        f"心情: {mp['emotion']}"
+    )
+
+
 def build_plan_constraint(season_hint: str | None, kigo_hint: str | None) -> str:
     """Plan→Compose の slippage を防ぐ強調文。"""
     if not (season_hint or kigo_hint):
