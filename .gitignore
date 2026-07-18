@@ -39,6 +39,7 @@ models/
 app/backend/data/*
 !app/backend/data/kigo.json
 !app/backend/data/classical_tanka.json
+!app/backend/data/kogo_yomi.json
 
 # OS
 .DS_Store
