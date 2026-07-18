@@ -57,6 +57,25 @@ def test_kigo_dict_loaded():
     assert validator.KIGO_DICT.get("雪") == "冬"
 
 
+def test_kigo_dict_missing_fails_loud(tmp_path, monkeypatch):
+    """季語辞書の欠損は、原因不明の import 失敗ではなく対処可能な明示エラーで落ちる。
+
+    silent degrade (空 dict) にすると全季語チェックが黙って素通りしスコアが静かに壊れる
+    ため、fail-loud が正しい挙動 (fresh clone で data 未コミットを即検知する安全網)。"""
+    monkeypatch.setattr(validator, "KIGO_DATA_PATH", tmp_path / "missing.json")
+    with pytest.raises(RuntimeError, match="季語辞書が見つかりません"):
+        validator._load_kigo_dict()
+
+
+def test_kigo_dict_corrupt_fails_loud(tmp_path, monkeypatch):
+    """壊れた JSON も明示エラーで落ちる。"""
+    bad = tmp_path / "kigo.json"
+    bad.write_text("{ this is not json", encoding="utf-8")
+    monkeypatch.setattr(validator, "KIGO_DATA_PATH", bad)
+    with pytest.raises(RuntimeError, match="JSON が壊れています"):
+        validator._load_kigo_dict()
+
+
 def test_find_kigo_longest_match():
     # 「秋風」を「秋」+「風」に分割せず 1 季語として拾う
     found = validator.find_kigo_in_text("秋風そよぐ")

@@ -32,6 +32,14 @@ build/
 data/
 models/
 
+# 中核データ(キュレーション IP)は版管理する。
+# 上の `*.json` / `data/` の除外を、下記の curated ファイルだけ打ち消す
+# (親ディレクトリを先に再包含してから、対象ファイルを whitelist する必要がある)。
+!app/backend/data/
+app/backend/data/*
+!app/backend/data/kigo.json
+!app/backend/data/classical_tanka.json
+
 # OS
 .DS_Store
 Thumbs.db
