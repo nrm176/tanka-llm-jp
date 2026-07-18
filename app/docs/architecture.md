@@ -170,6 +170,65 @@ sequenceDiagram
 
 ### 3.2 短歌パイプライン
 
+**制御フロー鳥瞰（現行）** — 終了条件・分岐・横断する仕組みを示す。詳細な実装は `tanka.py` の
+`generate_tanka_pipeline`:
+
+```mermaid
+flowchart TD
+    subgraph transport["リクエスト / 転送層（HTTP と LLM を非同期分離）"]
+        U["POST /api/tanka<br/>(theme, session_id)"]
+        EM["実効モデル解決<br/>session.model &gt; グローバル現在値（#20）"]
+        TASK["task_id を即返却<br/>+ asyncio 背景タスク起動"]
+        SSE["イベント → Redis Stream → SSE<br/>GET /api/tasks/{id}/stream"]
+        DBR[("MongoDB<br/>sessions / tasks / failures")]
+    end
+
+    subgraph pipe["generate_tanka_pipeline（オーケストレーション）"]
+        SNAP["モデルをスナップショット<br/>以降この生成は同一モデル固定（#15）"]
+        PLAN["① Plan：構想生成<br/>季語 / 季節 / 情景 / 心情"]
+        EXTRACT["plan から season_hint / kigo_hint 抽出"]
+        INJECT["注入ブロック準備<br/>・長期失敗記憶（model + 季 フィルタ）<br/>・RAG 古典作例（季語/季 構造検索）<br/>・plan_constraint（季語/季を強制）<br/>・動的 few-shot（お題の季の1例のみ #11）"]
+        COMPOSE["② Compose：JSON 短歌を生成"]
+        SC{"self-critique 有効?<br/>SELF_CRITIQUE"}
+        SCRUN["③ Self-critique<br/>自己点検 → 修正稿（失敗しても続行）"]
+        VALIDATE["④ Validate：validator.evaluate<br/>→ score・違反・critique"]
+        REC["不合格 validation を<br/>長期失敗記憶へ記録"]
+        BEST["best-of-N 更新<br/>最高 score の案を保持"]
+        PASS{"score ≥ 80?<br/>PASS_THRESHOLD"}
+        PLAT{"plateau?<br/>直近 N 回 best 更新なし"}
+        CAP{"attempt ≥ cap?<br/>HARD_CAP=50"}
+        REFINE["⑤ Refine<br/>critique + 短期失敗履歴を注入 → 再生成"]
+        COMPLETE["complete<br/>best（final_obj, score, model）を採用"]
+    end
+
+    LLM["LM Studio 呼出（各生成フェーズ共通）<br/>stream_completion：model 固定 + max_tokens 上限（#22/#23）<br/>→ split_harmony で思考分離 → raw 永続化（#18）<br/>context は 固定ベース + 直近1ラウンド（§6.10 対策）"]
+
+    U --> EM --> TASK --> SNAP
+    TASK -. "クライアントは SSE 購読" .-> SSE
+    SNAP --> PLAN --> EXTRACT --> INJECT --> COMPOSE --> SC
+    SC -- yes --> SCRUN --> VALIDATE
+    SC -- no --> VALIDATE
+    VALIDATE --> REC
+    VALIDATE --> BEST --> PASS
+    PASS -- "yes 合格" --> COMPLETE
+    PASS -- no --> PLAT
+    PLAT -- "yes 打ち切り" --> COMPLETE
+    PLAT -- no --> CAP
+    CAP -- "yes 打ち切り" --> COMPLETE
+    CAP -- no --> REFINE
+    REFINE -- "LLM エラー時は best-so-far で打ち切り" --> COMPLETE
+    REFINE --> VALIDATE
+    COMPLETE --> DBR
+    REC --> DBR
+
+    PLAN -. LLM .-> LLM
+    COMPOSE -. LLM .-> LLM
+    SCRUN -. LLM .-> LLM
+    REFINE -. LLM .-> LLM
+```
+
+**参加者間シーケンス** — 誰が誰を呼ぶか（同じ流れを interaction 視点で）:
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -178,37 +237,43 @@ sequenceDiagram
     participant V as validator.py
     participant DB as MongoDB
 
+    Note over Pipe: モデルをスナップショット (#15/#20、以降この生成は固定)
+
     Note over Pipe: Step 1: Plan
     Pipe->>L: stream "お題から構想を立ててください"
     L-->>Pipe: 季語: X / 季節: Y / 情景 / 心情
 
     Pipe->>V: extract_season_from_plan ("Y")
     Pipe->>V: extract_kigo_from_plan ("X")
-    Pipe->>DB: recent_failures(season=Y, limit=3)
+    Pipe->>DB: recent_failures(season=Y, model=M, limit=3)
     DB-->>Pipe: [失敗 1, 失敗 2, ...]
+    Note over Pipe: RAG: 古典作例を季語/季で構造検索し compose に注入
 
     Note over Pipe: Step 2: Compose (初稿)
-    Pipe->>L: Compose (system + few-shot + plan +<br/>plan_constraint + long-term failures)
+    Pipe->>L: Compose (system + 動的 few-shot + plan + plan_constraint +<br/>RAG 古典作例 + long-term failures)
     L-->>Pipe: JSON 初稿
 
     Note over Pipe: Step 3: Self-critique (Phase 1 B4, gated by SELF_CRITIQUE_ENABLED)
     Pipe->>L: "上記の短歌を自己点検し、必要なら修正版を JSON で"
     L-->>Pipe: JSON (自己修正版 or 同一)
 
-    Note over Pipe: Step 4-5: Validate → Refine ループ
+    Note over Pipe: Step 4-5: Validate → Refine ループ (全 attempt の best-of-N を採用)
     loop until pass or plateau or HARD_CAP
         Pipe->>V: parse_tanka_json
         Pipe->>V: evaluate(expected_season=Y, expected_kigo=X)
         V-->>Pipe: score, violations
-        Pipe->>DB: record_failure (if score < 80)
+        Pipe->>DB: record_failure (不合格時、model=M 付き)
 
         alt score >= 80
             Note over Pipe: break (合格)
         else 直近 N 試行で改善なし
             Note over Pipe: break (plateau, best 案を採用)
+        else attempt >= HARD_CAP(50)
+            Note over Pipe: break (cap 到達, best 案を採用)
         else
-            Pipe->>L: Refine (critique 注入, short-term failure_history も)
-            L-->>Pipe: JSON 再稿
+            Pipe->>L: Refine (critique + short-term failure_history 注入)
+            Note over L: max_tokens 上限 (#22/#23) で暴走を fail-clean に bound
+            L-->>Pipe: JSON 再稿 (LLM エラー時は best-so-far で打ち切り)
         end
     end
 
@@ -379,6 +444,7 @@ format_critique → refine プロンプトの user 部分に投入
 合格         score >= 80                      → 即終了 (該当 attempt を最終結果)
 plateau     直近 3 試行で best_score 更新なし   → 打ち切り、過去最高の attempt を採用
 hard cap    attempt >= HARD_CAP (=50)         → 打ち切り (安全網; 通常踏まない)
+llm_error   refine 中の LLM 例外/context 超過   → best-so-far で打ち切り (fail-clean; #22/#23 の上限とペア)
 cancel      asyncio.Task.cancel()             → partial を保存して終了
 ```
 
