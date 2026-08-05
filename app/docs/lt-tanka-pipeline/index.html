@@ -1,0 +1,473 @@
+<title>8Bを賢くせず、短歌を詠ませる — LT スライド</title>
+<style>
+  /* ────────────────────────────────────────────────
+     墨と朱 — 投影用に墨色単一テーマへ意図的にコミット
+     ──────────────────────────────────────────────── */
+  :root {
+    --ink:      #14161c;   /* 墨 (地) */
+    --ink-soft: #1d2029;   /* 墨のむら (パネル地) */
+    --paper:    #ece7dc;   /* 和紙 (文字) */
+    --dim:      #9a958a;   /* 薄墨 (補足文字) */
+    --faint:    #4a4d58;   /* 罫線 */
+    --shu:      #d9503c;   /* 朱 (アクセント) */
+    --sakura:   #f0aebe;   /* 桜 — 春アトラクター専用 */
+    --ai:       #6c93c0;   /* 藍 — 構造・図版 */
+    --take:     #7fae72;   /* 若竹 — 合格・成功 */
+    --serif: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", "BIZ UDMincho", serif;
+    --sans:  "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+    --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: clamp(14px, 1.35vw, 19px); }
+  body {
+    background: var(--ink);
+    color: var(--paper);
+    font-family: var(--sans);
+    line-height: 1.7;
+    overflow: hidden;
+    height: 100vh;
+    cursor: default;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── progress ── */
+  #bar { position: fixed; top: 0; left: 0; height: 3px; background: var(--shu); width: 0%; transition: width .25s ease; z-index: 10; }
+  #counter {
+    position: fixed; bottom: 1rem; right: 1.4rem; z-index: 10;
+    font-family: var(--mono); font-size: .72rem; color: var(--dim);
+    font-variant-numeric: tabular-nums; letter-spacing: .08em;
+  }
+  #hint {
+    position: fixed; bottom: 1rem; left: 1.4rem; z-index: 10;
+    font-size: .68rem; color: var(--faint); letter-spacing: .06em;
+  }
+
+  /* ── slides ── */
+  .slide {
+    position: absolute; inset: 0;
+    display: none;
+    padding: 4.5rem 5.5rem 4rem;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .slide.on { display: flex; animation: rise .38s ease both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .slide.on { animation: none; } #bar { transition: none; } }
+  .inner { width: 100%; max-width: 62rem; margin: 0 auto; }
+
+  .kicker {
+    font-size: .78rem; letter-spacing: .35em; color: var(--shu);
+    margin-bottom: 1.1rem; font-weight: 600;
+  }
+  .kicker.pink { color: var(--sakura); }
+  .kicker.blue { color: var(--ai); }
+  h1, h2 { font-family: var(--serif); font-weight: 600; text-wrap: balance; letter-spacing: .02em; }
+  h1 { font-size: 2.9rem; line-height: 1.35; }
+  h2 { font-size: 2.05rem; line-height: 1.4; margin-bottom: 1.4rem; }
+  .lead { font-size: 1.08rem; color: var(--dim); max-width: 44rem; }
+  .lead b, p b { color: var(--paper); font-weight: 600; }
+  em { font-style: normal; color: var(--shu); }
+  .s-note { margin-top: 1.6rem; font-size: .85rem; color: var(--dim); }
+  .s-note code, p code, li code {
+    font-family: var(--mono); font-size: .88em; color: var(--ai);
+    background: var(--ink-soft); padding: .1em .4em; border-radius: 4px;
+  }
+
+  /* ── 縦書きの歌 ── */
+  .tanka-v {
+    writing-mode: vertical-rl; font-family: var(--serif);
+    font-size: 1.5rem; line-height: 2.4; letter-spacing: .18em;
+    height: 21rem; color: var(--paper);
+  }
+  .tanka-v .attr { font-size: .8rem; color: var(--dim); letter-spacing: .1em; margin-top: 2rem; }
+
+  /* ── layout helpers ── */
+  .cols { display: flex; gap: 3.5rem; align-items: center; }
+  .cols > .grow { flex: 1; min-width: 0; }
+  .stack { display: flex; flex-direction: column; gap: 1rem; }
+
+  .panel {
+    background: var(--ink-soft); border: 1px solid var(--faint);
+    border-radius: 10px; padding: 1.2rem 1.5rem;
+  }
+  .panel h3 { font-size: .85rem; letter-spacing: .2em; color: var(--dim); font-weight: 600; margin-bottom: .6rem; }
+
+  .biglist { list-style: none; display: flex; flex-direction: column; gap: 1.15rem; font-size: 1.15rem; }
+  .biglist li { padding-left: 1.6em; position: relative; }
+  .biglist li::before { content: "──"; position: absolute; left: 0; color: var(--shu); font-size: .8em; top: .35em; }
+  .biglist li .sub { display: block; font-size: .82rem; color: var(--dim); margin-top: .15rem; }
+  .biglist.x li::before { content: "✗"; color: var(--shu); font-size: 1em; top: 0; }
+
+  /* ── flow diagram ── */
+  .flow { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; font-family: var(--mono); }
+  .fbox {
+    border: 1.5px solid var(--ai); color: var(--paper); border-radius: 8px;
+    padding: .55rem 1.1rem; font-size: .95rem; background: var(--ink-soft); white-space: nowrap;
+  }
+  .fbox.hot { border-color: var(--shu); }
+  .fbox.okc { border-color: var(--take); color: var(--take); }
+  .farr { color: var(--faint); font-size: 1.1rem; }
+  .floop {
+    width: 100%; text-align: center; color: var(--dim); font-size: .8rem;
+    border: 1px dashed var(--faint); border-top: none; border-radius: 0 0 12px 12px;
+    padding: .45rem 0 .35rem; margin-top: .1rem;
+  }
+
+  /* ── tables ── */
+  table { border-collapse: collapse; font-variant-numeric: tabular-nums; width: 100%; }
+  th, td { padding: .55rem .9rem; text-align: center; border-bottom: 1px solid var(--faint); font-size: .95rem; }
+  th { color: var(--dim); font-weight: 600; font-size: .8rem; letter-spacing: .1em; }
+  td.l, th.l { text-align: left; }
+  td.pink { background: rgba(240,174,190,.13); color: var(--sakura); font-weight: 700; }
+  td.okv { color: var(--take); font-weight: 700; }
+  td.mut { color: var(--faint); }
+  .tbl-wrap { overflow-x: auto; }
+
+  /* ── score bars (slide 6) ── */
+  .bars { display: flex; align-items: flex-end; gap: 2.2rem; height: 13rem; position: relative; padding: 0 1rem; margin-top: 1rem; }
+  .bars .thr {
+    position: absolute; left: 0; right: 0; bottom: 80%; border-top: 2px dashed var(--take);
+  }
+  .bars .thr span { position: absolute; right: 0; top: -1.5rem; font-size: .72rem; color: var(--take); font-family: var(--mono); }
+  .bar { width: 4.2rem; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: .4rem; height: 100%; }
+  .bar i { display: block; width: 100%; background: var(--sakura); border-radius: 4px 4px 0 0; min-height: 3px; opacity: .85; }
+  .bar.z i { background: var(--faint); }
+  .bar b { font-family: var(--mono); font-size: 1rem; color: var(--paper); }
+  .bar span { font-size: .7rem; color: var(--dim); font-family: var(--mono); }
+
+  /* ── big number ── */
+  .bignum { display: flex; align-items: baseline; gap: 2rem; font-family: var(--serif); margin: 1.2rem 0; }
+  .bignum .n { font-size: 5.2rem; line-height: 1; font-variant-numeric: tabular-nums; }
+  .bignum .n.pink { color: var(--sakura); }
+  .bignum .n.ok { color: var(--take); }
+  .bignum .arr { font-size: 2.2rem; color: var(--dim); }
+  .bignum .cap { font-size: .82rem; color: var(--dim); font-family: var(--sans); display: block; margin-top: .4rem; letter-spacing: .1em; }
+
+  .quote {
+    font-family: var(--serif); font-size: 1.5rem; line-height: 1.9; letter-spacing: .04em;
+    border-left: 3px solid var(--shu); padding-left: 1.4rem; margin: 1.4rem 0; text-wrap: balance;
+  }
+  .principle {
+    font-family: var(--serif); font-size: 2.2rem; line-height: 1.7; text-align: center;
+    letter-spacing: .05em; text-wrap: balance; margin: 2rem 0;
+  }
+  .principle em { color: var(--shu); }
+  kbd {
+    font-family: var(--mono); font-size: .85em; border: 1px solid var(--faint);
+    border-radius: 4px; padding: 0 .4em; color: var(--dim);
+  }
+</style>
+
+<div id="bar"></div>
+<div id="counter"></div>
+<div id="hint">← → で移動</div>
+
+<!-- 1 ─────────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner cols">
+    <div class="grow">
+      <div class="kicker">LIGHTNING TALK ── ローカルLLM短歌生成の記録</div>
+      <h1>8Bを賢くせず、<br>短歌を詠ませる</h1>
+      <p class="lead" style="margin-top:1.6rem">
+        LM Studio × <code>llm-jp-4-8b-thinking</code> による短歌生成パイプライン。<br>
+        外部検証ループという設計と、そこで観測できた <b>2つの発見</b> の話。
+      </p>
+    </div>
+    <div class="tanka-v">春過ぎて<br>夏来にけらし<br>白妙の<br>衣ほすてふ<br>天の香具山<span class="attr">持統天皇（新古今集）<br>── この歌が後で伏線になる</span></div>
+  </div>
+</section>
+
+<!-- 2 ─────────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker">問題設定</div>
+    <h2>短歌は、制約の塊である</h2>
+    <ul class="biglist">
+      <li>拍数 <b>5-7-5-7-7</b><span class="sub">拗音は1拍に数えない、促音・撥音・長音は各1拍 …機械的だが厳密</span></li>
+      <li>季語は <b>ちょうど1つ</b><span class="sub">なし ✗ / 2回 ✗ / 別の季の季語との同居（季重なり） ✗</span></li>
+      <li>お題・構想との <b>整合</b><span class="sub">「夏の夕暮れ」と頼んだのに春の歌が来たら破綻</span></li>
+    </ul>
+    <p class="s-note">これを <b>ローカルの 8B モデル</b>にやらせたい。ところが 8B は指示追従が弱い。<br>
+    「絶対に季節を変えるな」と書いても──変える。</p>
+  </div>
+</section>
+
+<!-- 3 ─────────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker">素朴な策は負ける</div>
+    <h2>「賢くする」方向は、行き止まりだった</h2>
+    <ul class="biglist x">
+      <li><b>プロンプトで祈る</b><span class="sub">【重要・必須】と強調しても、8B は従わない。願いは制約にならない</span></li>
+      <li><b>thinking に頼る</b><span class="sub">「5-7-5-7-7 を数えろ」が思考の暴走を誘発。モデルは自分の出力文字列を観測できないため、数え直すたびに違う答えが出て収束しない</span></li>
+      <li><b>大きいモデルに替える</b><span class="sub">30B でも同じ病理で暴走した（モデル非依存）。実測では 14 分のサイレントハングも</span></li>
+    </ul>
+    <p class="s-note">では、モデルを賢くするのをやめたらどうなるか。</p>
+  </div>
+</section>
+
+<!-- 4 ─────────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker blue">発想の転換</div>
+    <h2>賢さを、モデルの外に置く</h2>
+    <div class="flow">
+      <div class="fbox">Plan<br><small style="color:var(--dim)">構想: 季語/季節/情景/心情</small></div>
+      <div class="farr">→</div>
+      <div class="fbox">Compose<br><small style="color:var(--dim)">JSON 強制で作歌</small></div>
+      <div class="farr">→</div>
+      <div class="fbox hot">Validate<br><small style="color:var(--dim)">機械採点 (100点満点)</small></div>
+      <div class="farr">→</div>
+      <div class="fbox okc">合格 ≥ 80</div>
+      <div class="floop">不合格 → critique を添えて Refine → 再び Validate（改善が続く限り無制限・plateau 検知で打ち切り・全試行の最高得点を採用）</div>
+    </div>
+    <ul class="biglist" style="margin-top:1.6rem; font-size:1rem">
+      <li>出力は <b>JSON 強制</b> → Pydantic で型検証でき、ルールが書ける</li>
+      <li>検証器は <b>決定的</b>（LLM じゃない）。拍数計算も季語辞書照合もコードでやる</li>
+      <li>refine は固定回数でなく <b>plateau 検知</b>。簡単なお題は 1 回、難しいお題は何度でも</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 5 ─────────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker blue">発想の転換</div>
+    <h2>検証器は "checker" ではない</h2>
+    <p class="lead" style="margin-bottom:1.4rem">pass/fail を返すだけなら checker。この validator は <b>3 つの顔</b> を持つ。</p>
+    <div class="stack">
+      <div class="panel"><h3>① 採点者</h3>ルール × 重みで減点採点。<code>season_matches_plan −30</code> / <code>kigo_matches_plan −20</code> / <code>kigo_present −25</code> … 構想との整合を「願い」でなく<b>点数で強制</b>する</div>
+      <div class="panel"><h3>② 批評家</h3>違反を「なぜダメか・どう直すか」の <b>critique 文</b>に整形し、refine プロンプトへ注入。モデルは具体的な指摘に対してだけ直せばよい</div>
+      <div class="panel"><h3>③ 教師</h3>失敗を DB に記録し、<b>教訓 (LESSONS)</b> として次回以降の生成に注入。「これをやるな」の明示は few-shot 例より 8B に効く</div>
+    </div>
+  </div>
+</section>
+
+<!-- 6 ─────────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner cols">
+    <div class="grow">
+      <div class="kicker pink">発見 ① ── 序</div>
+      <h2>「夏の夕暮れ」事件</h2>
+      <p class="lead">構想は正しく <b>夏 / 蛍</b> を選んだ。<br>なのに最終出力は <em>春 / 花</em> ── 散る桜の歌。<br><b>47 点</b>（合格 80）の不合格作が「完成」として採用された。</p>
+      <div class="quote">花が散る<br>水面灯り 山の影<br>哀しさのみ 自然の理かな</div>
+      <p class="s-note">検証器は毎回正しく検出していた。<b>問題はモデルが従わない</b>こと。</p>
+    </div>
+    <div>
+      <div class="bars">
+        <div class="thr"><span>合格 80</span></div>
+        <div class="bar z"><b>0</b><i style="height:2%"></i><span>試行0<br>schema✗</span></div>
+        <div class="bar"><b>44</b><i style="height:44%"></i><span>試行1<br>春/蛍矛盾</span></div>
+        <div class="bar"><b>17</b><i style="height:17%"></i><span>試行2<br>悪化</span></div>
+        <div class="bar"><b>47</b><i style="height:47%"></i><span>試行3<br>採用😱</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 7 ─────────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker pink">発見 ① ── 横断分析</div>
+    <h2>単発ではなかった ── 52 件の遷移行列</h2>
+    <div class="tbl-wrap">
+    <table>
+      <tr><th class="l">構想の季 ＼ 出力の季</th><th style="color:var(--sakura)">春</th><th>夏</th><th>秋</th><th>冬</th><th>正答率</th></tr>
+      <tr><td class="l">春</td><td class="pink">10</td><td class="mut">·</td><td class="mut">·</td><td class="mut">·</td><td><b>100%</b></td></tr>
+      <tr><td class="l">夏</td><td class="pink">8</td><td class="okv">10</td><td class="mut">·</td><td class="mut">·</td><td>56%</td></tr>
+      <tr><td class="l">秋</td><td class="pink">4</td><td class="mut">·</td><td class="okv">6</td><td class="mut">·</td><td>55%</td></tr>
+      <tr><td class="l">冬</td><td class="pink">2</td><td class="mut">·</td><td class="mut">·</td><td class="okv">6</td><td>75%</td></tr>
+      <tr><td class="l">∅（構想抽出失敗）</td><td class="pink">5</td><td class="mut">·</td><td class="mut">·</td><td class="mut">·</td><td>0%</td></tr>
+    </table>
+    </div>
+    <ul class="biglist" style="margin-top:1.5rem; font-size:1.05rem">
+      <li>非春の構想の <em>37%</em> が春へ転落。春の構想は <b>100%</b> 春のまま（出られない・吸い込む）</li>
+      <li>夏⇄秋⇄冬の横滑りは <b>0 件</b> ── 誤りは必ず春への<b>一方通行</b></li>
+      <li>迷ったとき（抽出失敗）は <b>全件春へ</b>。名付けて <em>春アトラクター</em></li>
+    </ul>
+  </div>
+</section>
+
+<!-- 8 ─────────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker pink">発見 ① ── 真因</div>
+    <h2>磁石は、プロンプト先頭の例だった</h2>
+    <div class="cols" style="align-items:flex-start">
+      <div class="grow">
+        <p class="lead" style="margin-bottom:1.2rem">few-shot は四季 4 例を見せていた。どの例が「写された」かを指紋照合すると──</p>
+        <table style="max-width:26rem">
+          <tr><th class="l">few-shot 例</th><th>写された件数</th></tr>
+          <tr><td class="l" style="color:var(--sakura)">#1 散る桜（春/花）</td><td class="pink">4 件</td></tr>
+          <tr><td class="l">#2 夏の夜（夏）</td><td class="mut">0</td></tr>
+          <tr><td class="l">#3 秋風（秋）</td><td class="mut">0</td></tr>
+          <tr><td class="l">#4 冬（冬）</td><td class="mut">0</td></tr>
+        </table>
+      </div>
+      <div class="panel" style="max-width:24rem">
+        <h3>動かぬ証拠</h3>
+        事件の歌の結句「<b style="color:var(--sakura)">自然の理かな</b>」は、例 #1 の emotion「自然の理への諦観」からの<b>直接コピー</b>。情景・心情も #1 のほぼ言い換えだった。
+      </div>
+    </div>
+    <p class="s-note">「季節の合う例を参考にする」のではなく、<b>先頭の最も鮮烈な例そのものへ collapse</b> していた。<br>
+    おまけ: RAG が注入した参考歌の冒頭も「<b>春過ぎて</b>」（冒頭の歌）── 春磁石が 2 つ並んでいた。</p>
+  </div>
+</section>
+
+<!-- 9 ─────────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker pink">発見 ① ── 対策と実証</div>
+    <h2>磁石を隠す ── 動的 few-shot</h2>
+    <p class="lead">構想の季に一致する例を <b>1 ペアだけ</b> 見せ、他季（特に春）の磁石をプロンプトから消す。<br>統制実験（同一構想・few-shot 切替のみ・非春 4 テーマ × 3 反復 = 24 試行）:</p>
+    <div class="bignum">
+      <span class="n pink">67<small style="font-size:.45em">%</small><span class="cap">OFF: 四季全部見せる（従来）<br>春へ転落 8/12</span></span>
+      <span class="arr">→</span>
+      <span class="n ok">0<small style="font-size:.45em">%</small><span class="cap">ON: 動的 few-shot<br>春へ転落 0/12</span></span>
+    </div>
+    <p class="s-note">「夏の夕暮れ」は OFF 3/3 → ON 0/3。1 ペア提示でも JSON 破綻は増えず、<br>
+    「四季を揃えて見せないと壊れる」という当初の思い込みは<b>データで否定</b>された。</p>
+  </div>
+</section>
+
+<!-- 10 ─────────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker">発見 ② ── 序</div>
+    <h2>次の問い ──「どのモデルが一番いいのか」</h2>
+    <p class="lead" style="margin-bottom:1.6rem">パイプラインが固まったので、モデルを差し替えて統制 eval（同一お題 12 題）で比較した。</p>
+    <div class="stack">
+      <div class="panel"><h3>llm-jp-4-8b-thinking（8B）</h3>日本語特化の thinking モデル。一発で良い歌を出す力は最強クラス</div>
+      <div class="panel"><h3>gemma-3-27b（27B）</h3>非 thinking の汎用モデル。3 倍のサイズ</div>
+      <div class="panel"><h3>gpt-oss-20b（20B）</h3>thinking を確実に閉じるタイプ。日本語短歌の一発力は…正直弱い</div>
+    </div>
+    <p class="s-note">普通に考えれば「一発の実力が高いモデル」が勝つはず。──ところが。</p>
+  </div>
+</section>
+
+<!-- 11 ─────────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker">発見 ② ── ランク逆転</div>
+    <h2>一発の実力と、最終品質の順位が反転した</h2>
+    <div class="tbl-wrap">
+    <table>
+      <tr><th class="l">model</th><th>一発合格率 (first-pass)</th><th>最終 avg スコア</th><th>zero 出力率</th></tr>
+      <tr><td class="l">llm-jp-4-8b-thinking</td><td><b>75%</b> 🥇</td><td>77.2 🥉</td><td style="color:var(--shu)"><b>17%</b></td></tr>
+      <tr><td class="l">gemma-3-27b</td><td>42%</td><td>80.0</td><td class="okv">0%</td></tr>
+      <tr><td class="l">gpt-oss-20b</td><td style="color:var(--shu)"><b>8%</b> 最下位</td><td class="okv"><b>84.5</b> 🥇</td><td class="okv">0%</td></tr>
+    </table>
+    </div>
+    <ul class="biglist" style="margin-top:1.5rem; font-size:1.05rem">
+      <li>一発の実力 <b>最下位 (8%)</b> の gpt-oss が、refine ループを経ると <em>最高品質</em> に磨き上がる</li>
+      <li>一発の実力 <b>最強 (75%)</b> の llm-jp は、thinking 暴走による zero 出力 17% が足を引く</li>
+      <li>外部検証ループが「素の弱さ」を吸収し、<b>応答性 × 無事故性</b> を品質に翻訳した</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 12 ─────────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker">発見 ② ── なぜそうなるか</div>
+    <h2>検証器と thinking は、代替財である</h2>
+    <div class="cols" style="align-items:flex-start">
+      <div class="grow stack">
+        <div class="panel"><h3>冗長</h3>validator が決定的・正確にやる仕事を、モデルが確率的・不正確に再実行している</div>
+        <div class="panel"><h3>浪費</h3>どうせ捨てられる自己検証に、トークンと context と待ち時間を払っている</div>
+        <div class="panel"><h3>自滅</h3>拍数のような「文字列を見ないと検証できない制約」で thinking は収束せず暴走。<code>&lt;/think&gt;</code> に到達しないまま予算が尽き、<b>出力が空</b>になる</div>
+      </div>
+      <div style="max-width:22rem">
+        <p class="lead">両方に金を払ってはいけない。<br><br>検証責任が機械に割り当てられているなら、モデル内の自己検証は<b>二重の無駄</b>であり、制約が重いときは<b>事故の発生源</b>になる。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 13 ─────────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker">設計原則</div>
+    <p class="principle">検証器を持つ側が、<br>モデルの<em>役割</em>を決める。</p>
+    <ul class="biglist" style="font-size:1.05rem; max-width:46rem; margin:0 auto">
+      <li>検証は機械に。モデルには「速く出して、指摘に応じて直す」ことだけを求める<span class="sub">Let the tool verify; let the model iterate.</span></li>
+      <li>モデル選定は「ベンチの素の実力」でなく <b>refine 応答性 × 無事故性</b> で<span class="sub">非 thinking か、確実に閉じる thinking を選ぶ</span></li>
+      <li>ただし効くのは<b>検証器が見える次元だけ</b><span class="sub">拍数・季語は機械が守れる。詩情・余韻は採点できず、素のモデル品質がそのまま出る</span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- 14 ─────────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker">持ち帰り</div>
+    <h2>賢さは、外付けできる</h2>
+    <ul class="biglist" style="font-size:1.2rem">
+      <li>小さいローカルモデル ＋ <b>決定的な検証器</b> ＋ critique/教訓のループ<span class="sub">= 「モデルを大きくする」以外の勝ち筋</span></li>
+      <li>few-shot は <b>磁石</b> になる<span class="sub">見せる例は「全部」でなく「選んで」。先頭の鮮烈な例は吸着点になりうる</span></li>
+      <li>設計を変えると、<b>モデルの選び方まで変わる</b><span class="sub">一発 8% のモデルが最終 1 位になる世界がある</span></li>
+    </ul>
+    <p class="s-note" style="margin-top:2rem">コード生成ならコンパイラとテスト、構造化抽出ならスキーマ validator ──<br>
+    決定的なチェッカーをループに持てる場なら、同じ設計がそのまま効く。</p>
+  </div>
+</section>
+
+<!-- 15 付録 ─────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker blue">付録 A ── 質疑用</div>
+    <h2>アーキテクチャの小ネタ</h2>
+    <div class="flow" style="margin-bottom:1.4rem">
+      <div class="fbox">Browser</div><div class="farr">→</div>
+      <div class="fbox">FastAPI<br><small style="color:var(--dim)">task_id を即返し</small></div><div class="farr">→</div>
+      <div class="fbox">asyncio Task<br><small style="color:var(--dim)">背景で LLM 実行</small></div><div class="farr">→</div>
+      <div class="fbox">Redis Streams<br><small style="color:var(--dim)">イベントを永続</small></div><div class="farr">→</div>
+      <div class="fbox">SSE<br><small style="color:var(--dim)">XREAD 0 で頭から replay</small></div>
+    </div>
+    <ul class="biglist" style="font-size:1rem">
+      <li>LLM 呼び出しは <b>HTTP リクエストの寿命から切り離す</b><span class="sub">生成は数分かかる。セッションを切り替えてもタスクは死なず、戻れば Streams から replay</span></li>
+      <li>Pub/Sub でなく <b>Streams</b> を選ぶ理由は「再接続時の頭出し」<span class="sub">SSE が切れても XREAD 0 で全イベントを再生できる</span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- 16 付録 ─────────────────────────────────────── -->
+<section class="slide">
+  <div class="inner">
+    <div class="kicker blue">付録 B ── 罠コレクション</div>
+    <h2>ローカル LLM 運用で実際に踏んだ罠</h2>
+    <ul class="biglist" style="font-size:1.02rem">
+      <li><b>サイレントハング 14 分</b><span class="sub">stuck connection で例外なく無限ブロック。チャンク間 read timeout (120s) で fail-clean に</span></li>
+      <li><b>refine 履歴の context 爆発</b><span class="sub">全試行を会話履歴に積むと "Context size exceeded" で zero 出力。固定ベース + 直近 1 ラウンドに</span></li>
+      <li><b>JIT ロードは context 8192 で載る</b><span class="sub">thinking モデルは即死。生成前に 32768 で明示ロード必須</span></li>
+      <li><b>IME の Enter で誤送信</b><span class="sub">日本語 UI では変換確定 Enter が送信を暴発させる。送信は Cmd/Ctrl+Enter のみに</span></li>
+    </ul>
+    <p class="s-note">出典: リポジトリ <code>CLAUDE.md §6</code> / <code>app/docs/</code> の各ポストモーテム</p>
+  </div>
+</section>
+
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  const MAIN = 14; // 本編枚数 (15枚目以降は付録)
+  let cur = Math.min(Math.max(parseInt(location.hash.slice(1)) - 1 || 0, 0), slides.length - 1);
+  const bar = document.getElementById('bar');
+  const counter = document.getElementById('counter');
+  function show(i) {
+    cur = Math.min(Math.max(i, 0), slides.length - 1);
+    slides.forEach((s, j) => s.classList.toggle('on', j === cur));
+    bar.style.width = ((cur + 1) / slides.length * 100) + '%';
+    counter.textContent = (cur + 1) + ' / ' + slides.length + (cur >= MAIN ? '（付録）' : '');
+    history.replaceState(null, '', '#' + (cur + 1));
+  }
+  addEventListener('keydown', (e) => {
+    if (['ArrowRight', ' ', 'PageDown', 'ArrowDown'].includes(e.key)) { e.preventDefault(); show(cur + 1); }
+    else if (['ArrowLeft', 'PageUp', 'ArrowUp'].includes(e.key)) { e.preventDefault(); show(cur - 1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(slides.length - 1);
+  });
+  addEventListener('click', (e) => {
+    if (e.target.closest('a')) return;
+    (e.clientX < innerWidth * 0.18) ? show(cur - 1) : show(cur + 1);
+  });
+  show(cur);
+</script>
