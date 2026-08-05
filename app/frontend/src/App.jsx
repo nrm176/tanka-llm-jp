@@ -11,6 +11,7 @@ import {
   createTankaTask,
   deleteSession,
   getActiveTask,
+  getKigo,
   getSession,
   listFailures,
   listModels,
@@ -576,6 +577,10 @@ function AppInner() {
   const [streaming, setStreaming] = useState(null)
   const [input, setInput] = useState('')
   const [tankaMode, setTankaMode] = useState(false)
+  // 手動構想モード: 人間が 情景/心情/季語/季節 を指定し、LLM の Plan フェーズを差し替える
+  const [manualMode, setManualMode] = useState(false)
+  const [kigoData, setKigoData] = useState(null)   // {春:[...], 夏:[...], ...} | null
+  const [mp, setMp] = useState({ season: '春', kigo: '', image: '', emotion: '' })
   const [health, setHealth] = useState({ status: 'checking' })
   const [error, setError] = useState(null)
   const [showFailures, setShowFailures] = useState(false)
@@ -867,8 +872,26 @@ function AppInner() {
     return () => clearInterval(t)
   }, [anyRunning, refreshSessions])
 
+  // 手動構想モードを開いたら季語辞書を一度だけ取得 (季節→季語のドロップダウン用)
+  useEffect(() => {
+    if (!manualMode || kigoData) return
+    getKigo()
+      .then((d) => {
+        setKigoData(d)
+        // 初期季語を現在の季節の先頭に合わせる
+        setMp((prev) => (prev.kigo ? prev : { ...prev, kigo: (d[prev.season] || [])[0] || '' }))
+      })
+      .catch((e) => setError(`季語の取得に失敗: ${e.message}`))
+  }, [manualMode, kigoData])
+
+  // 季節を変えたら、その季の先頭季語に付け替える (季ズレ防止)
+  const changeSeason = useCallback((season) => {
+    setMp((prev) => ({ ...prev, season, kigo: (kigoData?.[season] || [])[0] || '' }))
+  }, [kigoData])
+
   // ── 短歌パイプライン (タスク作成 → ストリーム購読) ──
-  const runTanka = useCallback(async (theme) => {
+  // manualPlan を渡すと LLM Plan フェーズをスキップする (手動構想モード)。
+  const runTanka = useCallback(async (theme, manualPlan = null) => {
     if (!activeId) return
     const sessionAtStart = activeId
     setMessages((prev) => [
@@ -887,7 +910,7 @@ function AppInner() {
     ])
     setError(null)
     try {
-      const { task_id } = await createTankaTask({ sessionId: sessionAtStart, theme })
+      const { task_id } = await createTankaTask({ sessionId: sessionAtStart, theme, manualPlan })
       await consumeTaskStream(task_id, 'tanka', sessionAtStart)
     } catch (e) {
       console.warn('runTanka failed:', e)
@@ -924,6 +947,18 @@ function AppInner() {
   const send = useCallback(async () => {
     const text = input.trim()
     if (!text || streaming || !activeId) return
+
+    // 手動構想モード: input は「お題」。情景/心情/季語が揃っていれば manual_plan で生成
+    if (manualMode) {
+      const image = mp.image.trim(), emotion = mp.emotion.trim(), kigo = mp.kigo.trim()
+      if (!kigo) { setError('季語を選んでください。'); return }
+      if (!image) { setError('情景を入力してください。'); return }
+      if (!emotion) { setError('心情を入力してください。'); return }
+      setInput('')
+      await runTanka(text, { season: mp.season, kigo, image, emotion })
+      return
+    }
+
     setInput('')
 
     if (text.toLowerCase() === '/end-tanka' || text.toLowerCase() === '/normal') {
@@ -940,7 +975,7 @@ function AppInner() {
     } else {
       await runChat(text)
     }
-  }, [input, streaming, activeId, runTanka, runChat])
+  }, [input, streaming, activeId, manualMode, mp, runTanka, runChat])
 
   // 停止ボタン: バックエンドのタスクをキャンセル (SSE は cancelled イベントを受けて自然終了する)。
   // セッション切替で SSE を切るのとは違って、タスク本体に止まってもらう。
@@ -1096,6 +1131,60 @@ function AppInner() {
 
         <footer>
           {tankaMode && <div className="mode-pill">短歌モード（フォローアップ可・<code>/end-tanka</code> で解除）</div>}
+          <div className="manual-toggle-row">
+            <label className="manual-toggle">
+              <input
+                type="checkbox"
+                checked={manualMode}
+                onChange={(e) => setManualMode(e.target.checked)}
+                disabled={!!streaming}
+              />
+              <span>手動構想モード（情景・心情・季語・季節を自分で指定）</span>
+            </label>
+          </div>
+          {manualMode && (
+            <div className="manual-plan-panel">
+              <div className="mp-row">
+                <label className="mp-field mp-narrow">
+                  <span>季節</span>
+                  <select value={mp.season} onChange={(e) => changeSeason(e.target.value)} disabled={!!streaming}>
+                    {['春', '夏', '秋', '冬', '新年'].map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </label>
+                <label className="mp-field mp-narrow">
+                  <span>季語</span>
+                  <select
+                    value={mp.kigo}
+                    onChange={(e) => setMp((p) => ({ ...p, kigo: e.target.value }))}
+                    disabled={!!streaming || !kigoData}
+                  >
+                    {!mp.kigo && <option value="">選択…</option>}
+                    {(kigoData?.[mp.season] || []).map((k) => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                </label>
+              </div>
+              <label className="mp-field">
+                <span>情景（一文）</span>
+                <input
+                  type="text"
+                  value={mp.image}
+                  onChange={(e) => setMp((p) => ({ ...p, image: e.target.value }))}
+                  placeholder="例: 夕暮れの田んぼに一匹の蛍が光る"
+                  disabled={!!streaming}
+                />
+              </label>
+              <label className="mp-field">
+                <span>心情（一文）</span>
+                <input
+                  type="text"
+                  value={mp.emotion}
+                  onChange={(e) => setMp((p) => ({ ...p, emotion: e.target.value }))}
+                  placeholder="例: 過ぎ去った夏を惜しむ静かな寂しさ"
+                  disabled={!!streaming}
+                />
+              </label>
+            </div>
+          )}
           <div className="input-row">
             <textarea
               ref={textareaRef}
@@ -1103,7 +1192,7 @@ function AppInner() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder={tankaMode ? '短歌について質問…' : 'メッセージを入力…  (短歌は tanka:<お題>)'}
+              placeholder={manualMode ? 'お題を入力…（例: 晩夏の蛍）' : (tankaMode ? '短歌について質問…' : 'メッセージを入力…  (短歌は tanka:<お題>)')}
               disabled={!!streaming || !activeId}
             />
             {streaming ? (
@@ -1127,7 +1216,10 @@ function AppInner() {
             )}
           </div>
           <div className="footer-hint">
-            送信ボタンをクリック、または <kbd>⌘ / Ctrl</kbd> + <kbd>Enter</kbd> で送信。Enter は改行。
+            {manualMode
+              ? '手動構想モード: お題＋情景・心情・季語・季節から短歌を生成（LLM の構想フェーズを省略）。'
+              : '送信ボタンをクリック、または '}
+            {!manualMode && <><kbd>⌘ / Ctrl</kbd> + <kbd>Enter</kbd> で送信。Enter は改行。</>}
           </div>
         </footer>
         </>

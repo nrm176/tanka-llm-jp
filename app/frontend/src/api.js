@@ -66,16 +66,25 @@ export async function createChatTask({ sessionId, userMessage, mode }) {
   return res.json()
 }
 
-export async function createTankaTask({ sessionId, theme, maxRefines = 3 }) {
+export async function createTankaTask({ sessionId, theme, maxRefines = 3, manualPlan = null }) {
+  const body = { session_id: sessionId, theme, max_refines: maxRefines }
+  if (manualPlan) body.manual_plan = manualPlan  // 手動構想モード: LLM Plan をスキップ
   const res = await fetch('/api/tanka', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId, theme, max_refines: maxRefines }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     throw new Error(`createTankaTask HTTP ${res.status}: ${text}`)
   }
+  return res.json()
+}
+
+// 手動構想モードの季語ドロップダウン用: 季節ラベル → 季語リスト
+export async function getKigo() {
+  const res = await fetch('/api/kigo')
+  if (!res.ok) throw new Error(`getKigo HTTP ${res.status}`)
   return res.json()
 }
 

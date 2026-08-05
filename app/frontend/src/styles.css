@@ -747,6 +747,47 @@ footer {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.92em;
 }
+/* ── 手動構想モード ── */
+.manual-toggle-row { margin-bottom: 8px; }
+.manual-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #444;
+  cursor: pointer;
+  user-select: none;
+}
+.manual-toggle input { cursor: pointer; }
+.manual-plan-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  background: #f7fbfd;
+  border: 1px solid #cfe3ee;
+  border-radius: 12px;
+}
+.manual-plan-panel .mp-row { display: flex; gap: 12px; }
+.mp-field { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.mp-field.mp-narrow { flex: 0 0 auto; min-width: 120px; }
+.mp-field > span { font-size: 12px; color: #5a7a8a; font-weight: 500; }
+.mp-field select,
+.mp-field input {
+  font-family: inherit;
+  font-size: 14px;
+  padding: 7px 10px;
+  border: 1px solid #d3d3d3;
+  border-radius: 8px;
+  background: #fff;
+  outline: none;
+}
+.mp-field select:focus,
+.mp-field input:focus { border-color: #7fb0c8; }
+.mp-field input:disabled,
+.mp-field select:disabled { background: #f0f0f0; color: #999; }
+
 .input-row {
   display: flex;
   gap: 10px;

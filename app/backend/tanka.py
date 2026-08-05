@@ -160,8 +160,11 @@ def _complete_event(plan: str, tanka_obj, score: int, fallback_text: str,
 # ────────────────────────── パイプライン本体 ──────────────────────────
 
 async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
-                                  model: str | None = None) -> AsyncIterator[dict[str, Any]]:
-    """短歌生成パイプライン。改善が続く限り refine し、全 attempt の最高 score を最終結果に採用する。"""
+                                  model: str | None = None,
+                                  manual_plan: dict | None = None) -> AsyncIterator[dict[str, Any]]:
+    """短歌生成パイプライン。改善が続く限り refine し、全 attempt の最高 score を最終結果に採用する。
+    manual_plan を渡すと LLM Plan フェーズをスキップし、人間が立てた構想 (季語/季節/情景/心情) を
+    そのまま compose に流す (手動構想モード)。"""
     import db          # 循環 import 回避のため遅延
     import rag
     import validator
@@ -170,17 +173,25 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
     # score_history が混ざらない。切替は次のタスクから有効になる。
     # 呼び出し側 (tasks.py) がセッション実効モデル (#20) を渡す。未指定はグローバル現在値。
     model = model or llm.get_model()
-    log.info("tanka pipeline start: theme=%s model=%s", theme, model)
+    log.info("tanka pipeline start: theme=%s model=%s manual=%s", theme, model, manual_plan is not None)
 
     # ── Step 1: Plan ──
-    plan = ""
-    async for ev in _run_llm_phase("plan", prompts.build_plan_messages(theme), model=model):
-        if ev["type"] == "phase_end":
-            plan = ev["text"]
-        yield ev
-
-    season_hint = validator.extract_season_from_plan(plan)
-    kigo_hint = validator.extract_kigo_from_plan(plan)
+    if manual_plan:
+        # 人間の構想で LLM Plan を差し替え。season/kigo は入力から直接確定 (regex を迂回)。
+        # phase_start/phase_end を LLM 版と同形で emit し、フロントの表示分岐を共通化する。
+        plan = prompts.format_manual_plan(manual_plan)
+        yield {"type": "phase_start", "phase": "plan", "manual": True}
+        yield {"type": "phase_end", "phase": "plan", "text": plan, "raw": plan, "manual": True}
+        season_hint = manual_plan.get("season") or None
+        kigo_hint = manual_plan.get("kigo") or None
+    else:
+        plan = ""
+        async for ev in _run_llm_phase("plan", prompts.build_plan_messages(theme), model=model):
+            if ev["type"] == "phase_end":
+                plan = ev["text"]
+            yield ev
+        season_hint = validator.extract_season_from_plan(plan)
+        kigo_hint = validator.extract_kigo_from_plan(plan)
     log.info("plan extracted: season=%s kigo=%s", season_hint, kigo_hint)
 
     # ── 注入ブロックの準備 (長期失敗記憶 + RAG) ──
