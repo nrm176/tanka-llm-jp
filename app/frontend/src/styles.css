@@ -788,6 +788,50 @@ footer {
 .mp-field input:disabled,
 .mp-field select:disabled { background: #f0f0f0; color: #999; }
 
+/* 自由文からのプリフィル (#43) */
+.mp-field .mp-draft {
+  font-size: 14px;
+  padding: 7px 10px;
+  border: 1px solid #d3d3d3;
+  border-radius: 8px;
+  background: #fff;
+  resize: vertical;
+  min-height: 44px;
+  max-height: 140px;
+}
+.mp-field .mp-draft:focus { border-color: #7fb0c8; }
+.mp-field .mp-draft:disabled { background: #f0f0f0; color: #999; }
+.mp-draft-actions { display: flex; align-items: center; gap: 10px; }
+.mp-extract-btn {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 14px;
+  border: 1px solid #7fb0c8;
+  border-radius: 8px;
+  background: #eaf4f9;
+  color: #2c6a8a;
+  cursor: pointer;
+}
+.mp-extract-btn:hover:not(:disabled) { background: #d9ecf5; }
+.mp-extract-btn:disabled { border-color: #d3d3d3; background: #f0f0f0; color: #999; cursor: default; }
+.mp-extract-note { font-size: 12px; color: #8a6d3b; }
+.mp-candidates { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mp-cand-label { font-size: 12px; color: #5a7a8a; font-weight: 500; }
+.mp-cand-chip {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid #cfe3ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #2c6a8a;
+  cursor: pointer;
+}
+.mp-cand-chip:hover:not(:disabled) { border-color: #7fb0c8; }
+.mp-cand-chip.selected { background: #2c6a8a; border-color: #2c6a8a; color: #fff; }
+.mp-cand-chip:disabled { color: #999; cursor: default; }
+
 .input-row {
   display: flex;
   gap: 10px;

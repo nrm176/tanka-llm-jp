@@ -10,6 +10,7 @@ import {
   createSession,
   createTankaTask,
   deleteSession,
+  extractPlan,
   getActiveTask,
   getKigo,
   getSession,
@@ -581,6 +582,11 @@ function AppInner() {
   const [manualMode, setManualMode] = useState(false)
   const [kigoData, setKigoData] = useState(null)   // {春:[...], 夏:[...], ...} | null
   const [mp, setMp] = useState({ season: '春', kigo: '', image: '', emotion: '' })
+  // 自由文の構想からのプリフィル (#43)。candidates は抽出された季語候補 [{kigo, season}]
+  const [mpDraft, setMpDraft] = useState('')
+  const [mpCandidates, setMpCandidates] = useState([])
+  const [mpExtracting, setMpExtracting] = useState(false)
+  const [mpExtractNote, setMpExtractNote] = useState('')
   const [health, setHealth] = useState({ status: 'checking' })
   const [error, setError] = useState(null)
   const [showFailures, setShowFailures] = useState(false)
@@ -889,6 +895,33 @@ function AppInner() {
     setMp((prev) => ({ ...prev, season, kigo: (kigoData?.[season] || [])[0] || '' }))
   }, [kigoData])
 
+  // 自由文の構想から季節/季語を辞書抽出してプリフィル (#43)。LLM は使わない。
+  // 情景には自由文を転記 (backend の 200 字上限に合わせて切り詰め)。
+  // 心情はあえて自動抽出しない (機械抽出の誤解釈リスクが高く、人間の入力価値が最大の項目)
+  const fillFromDraft = useCallback(async () => {
+    const text = mpDraft.trim()
+    if (!text) return
+    setMpExtracting(true)
+    setError(null)
+    try {
+      const r = await extractPlan(text)
+      setMpCandidates(r.candidates || [])
+      setMp((p) => ({
+        ...p,
+        image: text.slice(0, 200),
+        ...(r.kigo ? { season: r.season, kigo: r.kigo } : {}),
+      }))
+      const notes = []
+      if (!r.kigo) notes.push('季語が見つかりませんでした。季節・季語は手動で選んでください。')
+      if (text.length > 200) notes.push('情景は 200 字で切り詰めました。')
+      setMpExtractNote(notes.join(' '))
+    } catch (e) {
+      setError(`構想からの抽出に失敗: ${e.message}`)
+    } finally {
+      setMpExtracting(false)
+    }
+  }, [mpDraft])
+
   // ── 短歌パイプライン (タスク作成 → ストリーム購読) ──
   // manualPlan を渡すと LLM Plan フェーズをスキップする (手動構想モード)。
   const runTanka = useCallback(async (theme, manualPlan = null) => {
@@ -1144,6 +1177,46 @@ function AppInner() {
           </div>
           {manualMode && (
             <div className="manual-plan-panel">
+              {/* 自由文からのプリフィル (#43)。textarea に key handler は付けない —
+                  IME 変換確定 Enter が送信を誘発しないため (§6.2)。抽出はボタンのみ */}
+              <label className="mp-field">
+                <span>構想（自由文・任意）</span>
+                <textarea
+                  className="mp-draft"
+                  rows={2}
+                  value={mpDraft}
+                  onChange={(e) => setMpDraft(e.target.value)}
+                  placeholder="自由文の構想を貼り付け →「構想から埋める」で季節・季語・情景をプリフィル"
+                  disabled={!!streaming || mpExtracting}
+                />
+              </label>
+              <div className="mp-draft-actions">
+                <button
+                  type="button"
+                  className="mp-extract-btn"
+                  onClick={fillFromDraft}
+                  disabled={!mpDraft.trim() || !!streaming || mpExtracting}
+                >
+                  {mpExtracting ? '抽出中…' : '構想から埋める'}
+                </button>
+                {mpExtractNote && <span className="mp-extract-note">{mpExtractNote}</span>}
+              </div>
+              {mpCandidates.length > 1 && (
+                <div className="mp-candidates">
+                  <span className="mp-cand-label">季語候補:</span>
+                  {mpCandidates.map((c) => (
+                    <button
+                      type="button"
+                      key={c.kigo}
+                      className={`mp-cand-chip${mp.kigo === c.kigo ? ' selected' : ''}`}
+                      onClick={() => setMp((p) => ({ ...p, season: c.season, kigo: c.kigo }))}
+                      disabled={!!streaming}
+                    >
+                      {c.kigo}（{c.season}）
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="mp-row">
                 <label className="mp-field mp-narrow">
                   <span>季節</span>

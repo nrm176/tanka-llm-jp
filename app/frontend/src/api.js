@@ -88,6 +88,17 @@ export async function getKigo() {
   return res.json()
 }
 
+// 手動構想モードのプリフィル用 (#43): 自由文から季語辞書スキャンで季節・季語を抽出 (LLM 不使用)
+export async function extractPlan(text) {
+  const res = await fetch('/api/plan/extract', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+  if (!res.ok) throw new Error(`extractPlan HTTP ${res.status}`)
+  return res.json()
+}
+
 // ─── Task event stream (replay + live) ───
 
 export async function* streamTask(taskId, signal) {
