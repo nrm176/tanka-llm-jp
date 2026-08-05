@@ -105,6 +105,10 @@ open http://localhost:5178                    # フロント
 | `app/backend/bus.py` | Redis Streams 操作のみ (XADD/XREAD/EXPIRE) | ブローカ層変更時 |
 | `app/backend/data/kigo.json` | 226 季語 × 5 季のキュレーション | 季語追加時 |
 | `app/backend/data/classical_tanka.json` | RAG 用の古典名歌 31 首 (古今集/新古今集等、PD) | 作例追加時 |
+| `app/backend/data/kogo_yomi.json` | 古語・詩語の読み override (pykakasi 誤読の矯正、§6.3) | 誤読発見時 |
+
+**data/ は版管理対象** (.gitignore に carve-out 済み)。キュレーション IP なので、欠損時は
+validator / reading が fail-loud で起動を止める (silent degrade しない)。
 
 **重要な依存方向** (リファクタで整理済み、一方向):
 
@@ -151,8 +155,12 @@ open http://localhost:5178                    # フロント
 
 ### 6.3 pykakasi の限界
 - 現代漢字辞書ベース → 古典固有読み (「日」を「ひ」と読む) を誤判定
-- `mora_count_disputed` ルールで minor (-3) に降格して救済済み
-- 完全解決には MeCab + UniDic 移行が必要 (今のところ不要)
+- 【更新 2026-07】三層で対策済み: (1) **`data/kogo_yomi.json` の古語読み override** (エビデンス駆動
+  キュレーション、pykakasi 前段で最長一致置換。プローブ 18/18・古典コーパス critical 偽陽性 0 を達成)、
+  (2) `mora_count_disputed` で minor (-3) 降格、(3) 真の字余りは `off_by_one` で許容
+- **MeCab + UniDic 移行は実測の結果、棚上げ** (UniDic 72% < override 100%。露→ろ 等の退行もある)。
+  詳細は `app/docs/verifier-accuracy-pykakasi-vs-mecab.md`。誤読を見つけたら kogo_yomi.json に
+  エビデンス付きで追記 (推測エントリ禁止)。「夜」は よ/よる 両読み正当のため意図的に対象外
 
 ### 6.4 8B モデルの指示追従の弱さ
 - **Plan で決めた季節/季語を Compose で勝手に変える**現象がよく起きる

@@ -104,7 +104,21 @@ _SEASON_MAP = {
 
 
 def _load_kigo_dict() -> dict[str, str]:
-    raw = json.loads(KIGO_DATA_PATH.read_text(encoding="utf-8"))
+    # 季語辞書は検証に必須のキュレーション IP。欠損時は原因不明の import エラーで
+    # backend を落とすのではなく、対処可能な明示メッセージで fail-loud にする。
+    # (空 dict へ silent degrade はしない — 全季語チェックが黙って素通りし、
+    #  スコアが静かに壊れるほうが有害。CLAUDE.md「No silent caps」に従う)
+    try:
+        raw = json.loads(KIGO_DATA_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            f"季語辞書が見つかりません: {KIGO_DATA_PATH}\n"
+            "これは検証に必須のキュレーション IP で、版管理されている必要があります。"
+            "fresh clone で欠ける場合は data がまだコミットされていません "
+            "(.gitignore の carve-out と `git add -f` を確認)。"
+        ) from e
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"季語辞書の JSON が壊れています: {KIGO_DATA_PATH}: {e}") from e
     flat: dict[str, str] = {}
     for key, season_label in _SEASON_MAP.items():
         for kigo in raw.get(key, []):
