@@ -83,6 +83,44 @@ def test_find_kigo_longest_match():
     assert "秋風" in kigos
 
 
+# ─── extract_plan_prefill (#43 手動構想モードのプリフィル) ───
+
+def test_extract_plan_prefill_summer_text():
+    # issue #43 受け入れ基準 1: 夏の自由文 → 季節=夏、具体季語 (蝉) がプリフィル
+    r = validator.extract_plan_prefill(
+        "ある晴れた夏の朝、小学生たちがラジオ体操に向かっている。"
+        "ミンミンゼミが鳴き出し、蝉の声が朝の空気に響く。")
+    assert r["season"] == "夏"
+    # 「夏」も辞書ヒットするが、季節名そのものより具体季語を優先する
+    assert r["kigo"] == "蝉"
+    assert {"kigo": "夏", "season": "夏"} in r["candidates"]
+
+
+def test_extract_plan_prefill_no_hit_is_not_an_error():
+    # 受け入れ基準 2: 辞書ヒットなし → プリフィルなし (None)・例外なし
+    r = validator.extract_plan_prefill("公園でぼんやり空を見ていた。")
+    assert r["kigo"] is None
+    assert r["season"] is None
+    assert r["candidates"] == []
+
+
+def test_extract_plan_prefill_candidates_dedup_and_switchable():
+    # 受け入れ基準 3: 複数季語 → 先頭 (longest-match) を選び、他候補も返す。
+    # 同一季語の複数出現は 1 候補に畳む
+    r = validator.extract_plan_prefill("蝉の声、また蝉の声。夕立が来る。")
+    kigos = [c["kigo"] for c in r["candidates"]]
+    assert kigos.count("蝉") == 1
+    assert set(kigos) == {"蝉", "夕立"}
+    assert r["kigo"] == "夕立"  # longest-match-first: 2 文字の夕立が 1 文字の蝉より先
+
+
+def test_extract_plan_prefill_season_name_only_still_prefills():
+    # 具体季語がなく季節名だけヒットする文でも、季節のプリフィルとしては機能する
+    r = validator.extract_plan_prefill("冬のある日の帰り道。")
+    assert r["season"] == "冬"
+    assert r["kigo"] == "冬"
+
+
 # ─── JSON パース ───
 
 CLEAN_JSON = (

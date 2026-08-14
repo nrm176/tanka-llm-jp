@@ -13,6 +13,7 @@
 - POST   /api/tanka                短歌タスク作成 → {task_id} (manual_plan 指定で手動構想モード)
 - GET    /api/tanka/records        全セッション横断の短歌一覧 (新しい順)
 - GET    /api/kigo                 手動構想モード用: 季節 → 季語リスト
+- POST   /api/plan/extract         手動構想モード用: 自由文から季節・季語を辞書抽出 (プリフィル #43)
 - GET    /api/tasks/{tid}/stream   SSE: タスクのイベントストリーム (replay+ライブ)
 - POST   /api/tasks/{tid}/cancel   実行中タスクのキャンセル
 
@@ -126,6 +127,11 @@ class ManualPlan(BaseModel):
     season: Literal["春", "夏", "秋", "冬", "新年"]            # 季節 (季語必須のため雑は非対応)
     image: str = Field(..., min_length=1, max_length=200)   # 情景 (一文)
     emotion: str = Field(..., min_length=1, max_length=200) # 心情 (一文)
+
+
+class PlanExtractRequest(BaseModel):
+    """手動構想モードのプリフィル用 (#43)。自由文の構想テキスト。"""
+    text: str = Field(..., min_length=1, max_length=2000)
 
 
 class TankaRequest(BaseModel):
@@ -351,6 +357,14 @@ async def get_kigo() -> dict:
     _SEASON_LABEL = {"spring": "春", "summer": "夏", "autumn": "秋", "winter": "冬", "new_year": "新年"}
     raw = _json.loads((Path(__file__).parent / "data" / "kigo.json").read_text(encoding="utf-8"))
     return {label: raw.get(key, []) for key, label in _SEASON_LABEL.items()}
+
+
+@app.post("/api/plan/extract")
+async def extract_plan(req: PlanExtractRequest) -> dict:
+    """手動構想モードのプリフィル用 (#43)。自由文から季語辞書スキャンで季節・季語を抽出。
+    LLM は使わない (機械的照合のみ)。ロジックは validator.extract_plan_prefill に委譲。"""
+    import validator  # tanka.py と同様の遅延 import (main の常駐依存を増やさない)
+    return validator.extract_plan_prefill(req.text)
 
 
 # ─── Task streaming (SSE) ───

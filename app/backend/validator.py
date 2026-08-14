@@ -152,6 +152,33 @@ def find_kigo_in_text(text: str) -> list[tuple[str, str]]:
     return found
 
 
+# 季節名そのものも季語として辞書に載るが、プリフィルとしては最も無情報
+_SEASON_NAME_KIGO = set(_SEASON_MAP.values())
+
+
+def extract_plan_prefill(text: str) -> dict:
+    """自由文の構想から手動構想フォームのプリフィル候補を作る (#43)。
+    季語辞書スキャンのみで LLM は使わない — LLM の「理解」は Plan フェーズの復活であり、
+    手動モードが排除した解釈誤りを再導入するため。心情の抽出も意図的にしない。
+    候補順は辞書スキャン順 (longest-match-first) だが、季節名そのものの季語 (「夏」等) は
+    より具体的なヒットがあるとき後回しにする (「夏の朝…蝉の声」で 蝉 を選ぶための機械的規則)。
+    返り値: {kigo, season, candidates: [{kigo, season}, ...]}。ヒットなしは kigo/season が None。"""
+    seen: set[str] = set()
+    candidates = []
+    for kigo, season in find_kigo_in_text(text):
+        if kigo in seen:  # 同一季語の複数出現は 1 候補に畳む
+            continue
+        seen.add(kigo)
+        candidates.append({"kigo": kigo, "season": season})
+    candidates.sort(key=lambda c: c["kigo"] in _SEASON_NAME_KIGO)  # stable sort: 季節名だけ後ろへ
+    first = candidates[0] if candidates else None
+    return {
+        "kigo": first["kigo"] if first else None,
+        "season": first["season"] if first else None,
+        "candidates": candidates,
+    }
+
+
 # ─── ルール: 違反 / 重要度 / 重み ───
 
 Severity = Literal["critical", "major", "minor"]
