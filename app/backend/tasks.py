@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import db
@@ -81,10 +82,17 @@ async def _emit(task_id: str, event: dict[str, Any]) -> None:
         log.warning("failed to emit event %s for task %s: %s", event.get("type"), task_id, e)
 
 
-async def _finalize(task_id: str, status: str, error: str | None = None) -> None:
-    """共通の終了処理: ステータス更新 + done イベント + ストリーム TTL。"""
+async def _finalize(task_id: str, status: str, error: str | None = None,
+                    duration_seconds: float | None = None) -> None:
+    """共通の終了処理: ステータス更新 + done イベント + ストリーム TTL。
+    duration_seconds (#27) を渡すと done イベントに載る。complete イベントは done より
+    先に流れるため、ライブ UI は done で所要時間を受け取り完成ブロックへ後付けする。"""
     db.update_task(task_id, status=status, error=error)
-    await _emit(task_id, {"type": "done", "status": status, **({"error": error} if error else {})})
+    await _emit(task_id, {
+        "type": "done", "status": status,
+        **({"error": error} if error else {}),
+        **({"duration_seconds": duration_seconds} if duration_seconds is not None else {}),
+    })
     await q.expire_stream(task_id)
 
 
@@ -165,6 +173,8 @@ def apply_event_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
             "phase": event.get("phase"),
             "attempt": event.get("attempt"),
             "raw": raw,
+            # フェーズ所要秒 (#27)。手動 Plan (LLM なし) や旧イベントは None
+            "duration_seconds": event.get("duration_seconds"),
         })
     elif etype == "complete":
         state["plan"] = event.get("plan")
@@ -203,6 +213,7 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
     """tanka:お題 のユーザーメッセージは既に DB に書かれている前提。
     パイプライン実行 → 完成短歌を DB に保存。"""
     log.info("tanka task started: task=%s theme=%s", task_id, theme)
+    started = time.monotonic()  # 全体所要 (#27)。壁時計でなく monotonic (時刻調整の影響を受けない)
     final_state: dict[str, Any] = {
         "kind": "tanka",
         "theme": theme,
@@ -257,16 +268,18 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
             else:
                 await _emit(task_id, event)
 
+        final_state["duration_seconds"] = round(time.monotonic() - started, 2)
         if final_state["tanka"]:
             db.append_message(session_id, final_state)
-        await _finalize(task_id, "completed")
+        await _finalize(task_id, "completed", duration_seconds=final_state["duration_seconds"])
 
     except asyncio.CancelledError:
+        final_state["duration_seconds"] = round(time.monotonic() - started, 2)
         if final_state.get("tanka"):
             # complete まで到達していたなら保存。途中なら破棄。
             db.append_message(session_id, final_state)
         await _emit(task_id, {"type": "cancelled"})
-        await _finalize(task_id, "cancelled")
+        await _finalize(task_id, "cancelled", duration_seconds=final_state["duration_seconds"])
         raise
     except Exception as e:
         log.exception("tanka task %s failed", task_id)

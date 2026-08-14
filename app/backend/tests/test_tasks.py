@@ -117,3 +117,20 @@ def test_phase_end_missing_raw_defaults_to_empty():
     s = _base_state()
     tasks.apply_event_to_state(s, {"type": "phase_end", "phase": "plan", "text": "t"})
     assert s["phases"][0]["raw"] == ""
+
+
+def test_phase_end_carries_duration_seconds():
+    # フェーズ所要秒 (#27) を phases エントリに永続化する
+    s = _base_state()
+    tasks.apply_event_to_state(
+        s, {"type": "phase_end", "phase": "compose", "text": "t", "raw": "r",
+            "duration_seconds": 42.5}
+    )
+    assert s["phases"][0]["duration_seconds"] == 42.5
+
+
+def test_phase_end_missing_duration_defaults_to_none():
+    # 手動 Plan (LLM 呼び出しなし) や旧イベントは duration を持たない
+    s = _base_state()
+    tasks.apply_event_to_state(s, {"type": "phase_end", "phase": "plan", "text": "t"})
+    assert s["phases"][0]["duration_seconds"] is None

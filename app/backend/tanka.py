@@ -19,6 +19,7 @@ Plan → Compose(JSON) → (self-critique) → Validate → Refine* のループ
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -48,6 +49,7 @@ async def _run_llm_phase(phase: str, messages: list[dict], *, attempt: int | Non
     raw は thinking 込みの全文。永続化用 (tasks.py が拾い、SSE へは流さない)。"""
     extra = {"attempt": attempt} if attempt is not None else {}
     yield {"type": "phase_start", "phase": phase, **extra}
+    t0 = time.monotonic()  # フェーズ所要 (#27)。LM Studio 劣化やモデル比較の分析材料になる
     raw = ""
     # completion 上限 (#22): 暴走思考の打ち切り。0/None なら無制限 (従来挙動)
     async for delta in llm.stream_completion(
@@ -55,7 +57,8 @@ async def _run_llm_phase(phase: str, messages: list[dict], *, attempt: int | Non
         raw += delta
         yield {"type": "chunk", "phase": phase, "text": delta, **extra}
     _, text = llm.split_harmony(raw)
-    yield {"type": "phase_end", "phase": phase, "text": text, "raw": raw, **extra}
+    yield {"type": "phase_end", "phase": phase, "text": text, "raw": raw,
+           "duration_seconds": round(time.monotonic() - t0, 2), **extra}
 
 
 # ────────────────────────── 副作用ヘルパー (イベントを出さない) ──────────────────────────

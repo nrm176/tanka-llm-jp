@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { listTankaRecords } from './api.js'
+import { formatDuration } from './format.js'
 
 // 短歌一覧 (Tanka Gallery): 全セッション横断で過去に詠んだ短歌を閲覧する read-only ビュー。
 // 表示時に /api/tanka/records を取得し、絞り込み・並べ替えはクライアント側で行う
@@ -27,6 +28,7 @@ function TankaCard({ rec, onOpenSession }) {
   const lines = String(rec.tanka).split('\n')
   const unmet = typeof rec.score === 'number' && rec.score < PASS_THRESHOLD
   const date = rec.created_at ? new Date(rec.created_at) : null
+  const duration = formatDuration(rec.duration_seconds)
   return (
     <div className={'tg-card' + (unmet ? ' unmet' : '')}>
       <div className="tg-poem">
@@ -61,6 +63,16 @@ function TankaCard({ rec, onOpenSession }) {
           <span className="tg-date">
             {date ? date.toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }) : ''}
           </span>
+          {duration && (
+            <span
+              className="tg-duration"
+              title={rec.duration_estimated
+                ? '生成所要時間 (旧データのため、お題送信時刻との差からの推定)'
+                : '生成所要時間 (Plan〜完成まで)'}
+            >
+              ⏱ {duration}{rec.duration_estimated ? '?' : ''}
+            </span>
+          )}
           <span className="tg-attempts" title="検証にかけた試行回数 (refine 含む)">試行 {rec.attempts} 回</span>
           <button
             className="tg-open"
@@ -135,6 +147,13 @@ export default function TankaGallery({ onOpenSession }) {
     return (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)
   }, [records])
 
+  // 平均所要時間 (#27)。モデル絞り込みと組み合わせるとモデル間の速度比較になる
+  const avgDuration = useMemo(() => {
+    const ds = records.map((r) => r.duration_seconds).filter((d) => typeof d === 'number')
+    if (ds.length === 0) return null
+    return formatDuration(ds.reduce((a, b) => a + b, 0) / ds.length)
+  }, [records])
+
   const filtered = data && records.length !== data.count
 
   return (
@@ -145,6 +164,7 @@ export default function TankaGallery({ onOpenSession }) {
           <span className="tg-count">
             {records.length} 首{filtered ? ` / 全 ${data.count} 首` : ''}
             {avg !== null && ` ・ 平均 ${avg} 点`}
+            {avgDuration !== null && ` ・ 平均所要 ${avgDuration}`}
           </span>
           <button className="ev-refresh" onClick={reload} disabled={loading}>更新</button>
         </div>

@@ -110,3 +110,66 @@ def test_iter_tanka_records_uses_array_index_not_tanka_ordinal():
 
 def test_iter_tanka_records_empty_messages():
     assert list(db.iter_tanka_records("s", "t", [])) == []
+
+
+# ─── 生成所要時間 (#27) ───
+
+def test_measured_duration_takes_precedence():
+    # 測定値 (duration_seconds) があれば、created_at 差分による推定はしない
+    rec = db.tanka_record_from_message(
+        "s", "t", _tanka_msg(duration_seconds=192.5), 1,
+        prev_user_created_at=datetime(2026, 6, 1, 11, 0, tzinfo=timezone.utc),
+    )
+    assert rec["duration_seconds"] == 192.5
+    assert rec["duration_estimated"] is False
+
+
+def test_legacy_duration_derived_from_prev_user_message():
+    # 旧データ: 直前 user メッセージ (tanka:お題) の created_at との差分から導出する。
+    # user メッセージはタスク作成時、tanka メッセージは完了時に append されるため
+    # 差分 ≈ 生成の壁時計時間になる
+    rec = db.tanka_record_from_message(
+        "s", "t", _tanka_msg(), 1,  # created_at = 12:00:00 UTC
+        prev_user_created_at=datetime(2026, 6, 1, 11, 56, 48, tzinfo=timezone.utc),
+    )
+    assert rec["duration_seconds"] == 192.0  # 3分12秒
+    assert rec["duration_estimated"] is True
+
+
+def test_duration_derivation_handles_naive_and_isoformat():
+    # Mongo 直読み (naive datetime) と _serialize 済み (isoformat 文字列) の混在に耐える
+    rec = db.tanka_record_from_message(
+        "s", "t", _tanka_msg(created_at="2026-06-01T12:00:30+00:00"), 1,
+        prev_user_created_at=datetime(2026, 6, 1, 12, 0, 0),  # naive UTC
+    )
+    assert rec["duration_seconds"] == 30.0
+    assert rec["duration_estimated"] is True
+
+
+def test_duration_none_without_prev_user_message():
+    rec = db.tanka_record_from_message("s", "t", _tanka_msg(), 0)
+    assert rec["duration_seconds"] is None
+    assert rec["duration_estimated"] is False
+
+
+def test_negative_derived_duration_is_rejected():
+    # user メッセージのほうが後 (並びの異常) なら推定しない
+    rec = db.tanka_record_from_message(
+        "s", "t", _tanka_msg(), 1,
+        prev_user_created_at=datetime(2026, 6, 1, 13, 0, tzinfo=timezone.utc),
+    )
+    assert rec["duration_seconds"] is None
+
+
+def test_iter_tanka_records_tracks_nearest_preceding_user_message():
+    # 2 首目は「2 首目の直前の user」との差分になる (1 首目の user と混同しない)
+    t0 = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    msgs = [
+        {"kind": "user", "content": "tanka:夏", "created_at": t0},
+        _tanka_msg(created_at=datetime(2026, 6, 1, 12, 1, 0, tzinfo=timezone.utc)),
+        {"kind": "user", "content": "tanka:冬", "created_at": datetime(2026, 6, 1, 13, 0, 0, tzinfo=timezone.utc)},
+        _tanka_msg(theme="冬", created_at=datetime(2026, 6, 1, 13, 2, 30, tzinfo=timezone.utc)),
+    ]
+    recs = list(db.iter_tanka_records("s", "t", msgs))
+    assert [r["duration_seconds"] for r in recs] == [60.0, 150.0]
+    assert all(r["duration_estimated"] for r in recs)
