@@ -16,7 +16,7 @@ import tanka
 
 
 def _stub_stream(captured):
-    async def stub(messages, temperature=0.3, model=None, max_tokens=None):
+    async def stub(messages, temperature=0.3, model=None, max_tokens=None, meta=None):
         captured["model"] = model
         captured["max_tokens"] = max_tokens
         yield '{"ok": true}'
