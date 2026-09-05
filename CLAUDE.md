@@ -94,7 +94,7 @@ open http://localhost:5178                    # フロント
 |---|---|---|
 | `app/backend/main.py` | FastAPI ルートのみ。**ロジックは書かない**。リクエスト検証 → 適切な層に委譲のみ | エンドポイント追加時 |
 | `app/backend/tasks.py` | asyncio Task の lifecycle (起動/cancel/cleanup)、SSE への event emit、長期失敗の記録 | 新タスク種別追加時 |
-| `app/backend/tanka.py` | パイプラインの**オーケストレーション**のみ (Plan→Compose→Validate→Refine の流れ)。293 行 | パイプライン構造変更時 |
+| `app/backend/tanka.py` | パイプラインの**オーケストレーション**のみ (Plan→Compose→Validate→Refine の流れ) | パイプライン構造変更時 |
 | `app/backend/llm.py` | LM Studio 通信 (client/timeout/stream_completion/split_harmony/is_context_error/ReasoningMerger/rescue_json_from_text) | LLM 層変更時 |
 | `app/backend/prompts.py` | system プロンプト・few-shot・メッセージ組み立て (純関数) | プロンプト調整時 |
 | `app/backend/reading.py` | 読み・拍数 (kanji_to_hira/count_moras)。葉モジュール、依存なし | ほぼ触らない |
@@ -263,6 +263,10 @@ validator / reading が fail-loud で起動を止める (silent degrade しな�
 - 教訓: **思考の流れ方はアプリではなく LM Studio 側の実装詳細**であり、更新で変わりうる。
   「思考が表示されない」報告が出たら、まず LM Studio 直接プローブで content / reasoning_content の
   配分を観測する (`app/docs/model-compat-qwen3-swallow.md` §6 のプローブ)
+- 【追記 #54】**詩歌に関する質問は chat でも thinking 暴走を誘発する** (和歌の質問で思考 39k 字が止まらず
+  手動キャンセル)。chat にも completion 上限 `TANKA_CHAT_MAX_COMPLETION_TOKENS` (既定 8192 = #22 と同じ) を
+  適用済み。上限到達で思考のみに終わった場合は思考を thinking に残し、回答には案内文を出す
+  (`tanka.CHAT_TRUNCATED_NOTICE`)。`tasks._run_chat` は complete イベントの thinking/answer を保存する
 
 ### 6.18 mongo:8.0 は Docker VM の kernel 6.19+ で起動を拒否する (2026-09 に実測)
 
@@ -304,11 +308,11 @@ validator / reading が fail-loud で起動を止める (silent degrade しな�
 ### 自動テスト (Phase 2 で導入)
 
 ```bash
-# validator の単体テスト (39 ケース、副作用ゼロなので LLM/DB 不要)
+# 単体テスト (175 ケース: validator / tasks reducer / db 変換 / llm 合流・救済 / thinking cap 等。副作用ゼロなので LLM/DB 不要)
 cd app/backend && uv run pytest -q
 ```
 
-`validator.py` は純関数集合なので pytest で網羅テスト済み。新ルール追加時は
+`validator.py` は純関数集合なので pytest で網羅テスト済み (他モジュールも純関数部分は `tests/` 配下で同様にカバー)。新ルール追加時は
 `tests/test_validator.py` にケースを足す。`test_every_rule_has_a_lesson` が
 「全ルールに LESSONS エントリがある」ことを保証しているので、ルール追加時は
 LESSONS への追加を忘れると test が落ちる (意図的な安全網)。
