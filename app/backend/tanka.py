@@ -151,11 +151,13 @@ def _lessons_event(entries: list[dict]) -> dict[str, Any]:
 def _score_one(validator, composition: str, season_hint: str | None, kigo_hint: str | None,
                theme: str) -> dict[str, Any]:
     """1 つの出力を検証して、validation イベントに必要な要素を dict で返す。"""
-    parsed = validator.parse_tanka_json(composition)
+    meta: dict[str, Any] = {}
+    parsed = validator.parse_tanka_json(composition, meta=meta)
+    repaired = bool(meta.get("json_repaired"))  # 末尾切れ救済が発動したか (#65)
     if isinstance(parsed, tuple):  # JSON/スキーマ違反 → score 0
         _, err_msg = parsed
         return {
-            "tanka_obj": None, "score": 0,
+            "tanka_obj": None, "score": 0, "json_repaired": repaired,
             "errors": [f"スキーマ違反: {err_msg}"], "warnings": [],
             "violations": [{"rule": "schema_invalid", "severity": "critical", "weight": 100, "message": err_msg}],
             "critique": validator.format_schema_critique(err_msg),
@@ -163,7 +165,7 @@ def _score_one(validator, composition: str, season_hint: str | None, kigo_hint: 
         }
     result = validator.evaluate(parsed, expected_season=season_hint, expected_kigo=kigo_hint, theme=theme)
     return {
-        "tanka_obj": parsed, "score": result.score,
+        "tanka_obj": parsed, "score": result.score, "json_repaired": repaired,
         "errors": result.errors, "warnings": result.warnings,
         "violations": [{"rule": v.rule, "severity": v.severity, "weight": v.weight, "message": v.message}
                        for v in result.violations],
@@ -301,6 +303,7 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
             "errors": r["errors"], "warnings": r["warnings"], "violations": r["violations"],
             "parsed_tanka": r["tanka_obj"].model_dump() if r["tanka_obj"] else None,
             "raw_output": composition, "resolved": resolved,
+            **({"json_repaired": True} if r["json_repaired"] else {}),
         }
 
         if resolved:
