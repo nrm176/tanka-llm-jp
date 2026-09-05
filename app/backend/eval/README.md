@@ -12,6 +12,9 @@
 | `eval_themes.json` | 固定お題セット (50 件、四季 × 古典/現代 × 抽象/具体)。**安易に変更しない** (変えると過去結果と比較不能) |
 | `eval.sh` | 1 バリアントを 1 セッションで順次生成し、メトリクスを `results/` に保存 |
 | `eval-repeat.sh` | 同一お題を N 回生成し variance (mean/std/range) を測る。best-of-N の振れ幅を定量化 |
+| `eval-paired.sh` | **paired A/B**: 2 arm をお題ごとに ABBA で交互実行 (LM Studio 劣化が対称に作用)。per-request 上書き (例 `{"self_critique": false}`) で arm を定義。paired difference 統計 + 事後検証を出力、中断再開可 |
+| `eval_themes_smoke2.json` | ハーネス自体の dry-run 用 2 題。品質判断には使わない |
+| `experiments/` | 実験ごとの versioned runbook (事前登録・手順・判定基準)。例: `self-critique-paired/` |
 | `compare.sh` | 2 つの結果を比較し、差分を 改善/劣化 + sampling-noise 警告付きで表示 |
 | `results/` | 各実行の結果 JSON (`<timestamp>-<variant>.json`) |
 | `FINDINGS.md` | Phase 2 の知見ログ (ベースライン・variance・バグ・環境制約) |

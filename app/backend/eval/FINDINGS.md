@@ -186,7 +186,7 @@ B(sc-off)  前半8=83.3  後半8=76.3   ← 後半 7 点低下のみ
 
 | 実験 | ツール | 問い |
 |---|---|---|
-| self-critique の効果 | `TANKA_SELF_CRITIQUE=0` + `eval.sh` + `compare.sh` | 自己点検フェーズは本当に効くか |
+| self-critique の効果 | **`eval-paired.sh`** (per-request `self_critique` 上書きで ABBA 交互実行) — runbook: `experiments/self-critique-paired/RUNBOOK.md`。blocked A/B (§5.5) の再発防止 | 自己点検フェーズは本当に効くか (paired 再測定、未実行) |
 | variance の定量化 | `eval-repeat.sh "<お題>" 5` | best-of-N の N をいくつにすべきか、ノイズ下限は |
 | 報酬軸の追加 | (新規 LLM-as-judge) | ルールスコアと「質」の相関は |
 | 重みの較正 | 人間評価ラベル + grid search | hand-tuned 重みは妥当か |

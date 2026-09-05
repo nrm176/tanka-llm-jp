@@ -55,3 +55,6 @@ notes.md
 
 # プロセス ID (ephemeral)
 *.pid
+
+# eval のお題セットは版管理対象 (skill: subset は eval/ 内にファイルとして置く。*.json の全域 ignore の例外)
+!app/backend/eval/eval_themes*.json

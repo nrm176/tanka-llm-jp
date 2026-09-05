@@ -306,7 +306,7 @@ erDiagram
         string   session_id
         string   kind            "chat | tanka"
         string   status          "running | completed | failed | cancelled"
-        object   input           "{mode} or {theme, max_refines}"
+        object   input           "{mode} or {theme, max_refines, manual_plan?, self_critique?}"
         string   error
         datetime created_at
         datetime updated_at
