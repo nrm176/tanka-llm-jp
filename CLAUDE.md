@@ -365,6 +365,11 @@ SID=$(curl -s -X POST http://localhost:8001/api/sessions -H 'Content-Type: appli
 TID=$(curl -s -X POST http://localhost:8001/api/tanka -H 'Content-Type: application/json' \
   -d "{\"session_id\":\"$SID\",\"theme\":\"夏\"}" | jq -r .task_id)
 curl -sN "http://localhost:8001/api/tasks/$TID/stream" | head -20
+
+# 4b. API 単体利用 (#61): session_id 省略でセッション自動作成 → SSE なしで task をポーリング
+TID=$(curl -s -X POST http://localhost:8001/api/tanka -H 'Content-Type: application/json' \
+  -d '{"theme":"夏"}' | jq -r .task_id)
+curl -s "http://localhost:8001/api/tasks/$TID" | jq '{status, result}'   # 完了まで result は null
 ```
 
 破壊的変更は **必ず docker compose 上で動作確認** (`docker compose restart backend` で reload)。

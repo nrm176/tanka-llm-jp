@@ -83,11 +83,13 @@ async def _emit(task_id: str, event: dict[str, Any]) -> None:
 
 
 async def _finalize(task_id: str, status: str, error: str | None = None,
-                    duration_seconds: float | None = None) -> None:
+                    duration_seconds: float | None = None,
+                    result: dict | None = None) -> None:
     """共通の終了処理: ステータス更新 + done イベント + ストリーム TTL。
     duration_seconds (#27) を渡すと done イベントに載る。complete イベントは done より
-    先に流れるため、ライブ UI は done で所要時間を受け取り完成ブロックへ後付けする。"""
-    db.update_task(task_id, status=status, error=error)
+    先に流れるため、ライブ UI は done で所要時間を受け取り完成ブロックへ後付けする。
+    result (#61) を渡すとタスク文書に保存され、GET /api/tasks/{tid} が SSE なしで結果を返せる。"""
+    db.update_task(task_id, status=status, error=error, result=result)
     await _emit(task_id, {
         "type": "done", "status": status,
         **({"error": error} if error else {}),
@@ -130,7 +132,7 @@ async def _run_chat(task_id: str, session_id: str, user_message: str, mode: str,
             "content": answer,
             "thinking": thinking,
         })
-        await _finalize(task_id, "completed")
+        await _finalize(task_id, "completed", result={"thinking": thinking, "answer": answer})
 
     except asyncio.CancelledError:
         # 中断時は途中経過を partial として保存
@@ -144,7 +146,8 @@ async def _run_chat(task_id: str, session_id: str, user_message: str, mode: str,
                 "cancelled": True,
             })
         await _emit(task_id, {"type": "cancelled"})
-        await _finalize(task_id, "cancelled")
+        await _finalize(task_id, "cancelled",
+                        result={"thinking": thinking, "answer": partial} if partial else None)
         raise
     except Exception as e:
         log.exception("chat task %s failed", task_id)
@@ -224,6 +227,33 @@ def apply_event_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
         state["llm_error_recovered"] = event.get("recovered", False)
 
 
+def tanka_result_from_state(state: dict[str, Any]) -> dict[str, Any] | None:
+    """final_state → タスク文書に保存する軽量な結果 (#61)。純関数。
+
+    complete イベント / 短歌一覧レコード (db.tanka_record_from_message) と同じ語彙に揃える:
+    score は final_score の別名、attempts は validation 数。phases (thinking raw) や
+    validations の詳細はセッションメッセージ側に残し、ここには持ち込まない
+    (GET /api/tasks/{tid} を軽く保つ)。complete 未到達 (tanka なし) なら None。"""
+    if not state.get("tanka"):
+        return None
+    return {
+        "theme": state.get("theme"),
+        "tanka": state.get("tanka"),
+        "plan": state.get("plan"),
+        "moras": state.get("moras") or [],
+        "kigo": state.get("kigo"),
+        "season": state.get("season"),
+        "image": state.get("image"),
+        "emotion": state.get("emotion"),
+        "score": state.get("final_score"),
+        "model": state.get("model"),
+        "attempts": len(state.get("validations") or []),
+        "plateau_reached": bool(state.get("plateau_reached")),
+        "max_refines_reached": bool(state.get("max_refines_reached")),
+        "duration_seconds": state.get("duration_seconds"),
+    }
+
+
 async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int,
                      model: str | None = None, manual_plan: dict | None = None,
                      self_critique: bool | None = None) -> None:
@@ -290,7 +320,8 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
         final_state["duration_seconds"] = round(time.monotonic() - started, 2)
         if final_state["tanka"]:
             db.append_message(session_id, final_state)
-        await _finalize(task_id, "completed", duration_seconds=final_state["duration_seconds"])
+        await _finalize(task_id, "completed", duration_seconds=final_state["duration_seconds"],
+                        result=tanka_result_from_state(final_state))
 
     except asyncio.CancelledError:
         final_state["duration_seconds"] = round(time.monotonic() - started, 2)
@@ -298,7 +329,8 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
             # complete まで到達していたなら保存。途中なら破棄。
             db.append_message(session_id, final_state)
         await _emit(task_id, {"type": "cancelled"})
-        await _finalize(task_id, "cancelled", duration_seconds=final_state["duration_seconds"])
+        await _finalize(task_id, "cancelled", duration_seconds=final_state["duration_seconds"],
+                        result=tanka_result_from_state(final_state))
         raise
     except Exception as e:
         log.exception("tanka task %s failed", task_id)

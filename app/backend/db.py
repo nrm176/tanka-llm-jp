@@ -201,7 +201,12 @@ def get_task(task_id: str) -> dict | None:
     return _serialize(_tasks().find_one({"_id": oid}))
 
 
-def update_task(task_id: str, *, status: str | None = None, error: str | None = None) -> None:
+def update_task(task_id: str, *, status: str | None = None, error: str | None = None,
+                result: dict | None = None) -> None:
+    """タスク文書の部分更新。None の引数は触らない。
+    result (#61) は完了時の成果物 (tanka: complete イベント相当の軽量 dict、chat: thinking/answer)。
+    GET /api/tasks/{tid} が SSE を介さずに結果を返すための置き場で、セッションメッセージ側の
+    フル永続化 (phases / validations 込み) とは別物。"""
     try:
         oid = ObjectId(task_id)
     except Exception:
@@ -211,6 +216,8 @@ def update_task(task_id: str, *, status: str | None = None, error: str | None = 
         update["status"] = status
     if error is not None:
         update["error"] = error
+    if result is not None:
+        update["result"] = result
     _tasks().update_one({"_id": oid}, {"$set": update})
 
 

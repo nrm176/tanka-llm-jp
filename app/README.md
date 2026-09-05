@@ -68,16 +68,33 @@ docker compose down -v
 ## Endpoints
 
 ```
-GET    /api/health               LM Studio + MongoDB health
-GET    /api/sessions             list sessions (no message bodies)
+GET    /api/health               LM Studio + MongoDB + Redis health
+GET    /api/sessions             list sessions (with active task)
 POST   /api/sessions             create new session
 GET    /api/sessions/{id}        full session with messages
 PATCH  /api/sessions/{id}        rename
 DELETE /api/sessions/{id}        delete
 
-POST   /api/chat                 SSE: chunk → complete → done
-POST   /api/tanka                SSE: phase_start/chunk/phase_end/validation/complete/done
+POST   /api/chat                 create chat task → {task_id} (LLM runs in background)
+POST   /api/tanka                create tanka task → {task_id, session_id}
+                                 session_id optional (auto-creates a session), manual_plan for manual-plan mode
+GET    /api/tasks/{tid}          task status + result once finished (poll here; no SSE needed)
+GET    /api/tasks/{tid}/stream   SSE: phase_start/chunk/phase_end/validation/complete/done (replay + live)
+POST   /api/tasks/{tid}/cancel   cancel a running task
 ```
+
+API-only usage (no UI, no SSE): POST the theme, then poll the task until `status` leaves `running`.
+
+```bash
+TID=$(curl -s -X POST localhost:8001/api/tanka -H 'Content-Type: application/json' \
+  -d '{"theme":"初秋の風"}' | jq -r .task_id)
+curl -s localhost:8001/api/tasks/$TID | jq '{status, result}'
+```
+
+`result` carries `tanka / plan / moras / kigo / season / image / emotion / score / model / attempts /
+plateau_reached / max_refines_reached / duration_seconds` for tanka tasks and `thinking / answer` for chat
+tasks; it is `null` while running or if the task failed. Pass `manual_plan` (`kigo / season / image / emotion`)
+to skip the LLM planning phase and fix the season word yourself.
 
 ## Configuration (env vars on backend container)
 
