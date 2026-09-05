@@ -620,12 +620,18 @@ function AppInner() {
   // 短歌一覧からのジャンプ先 ({sessionId, index} | null)。セッション読込後の
   // オートスクロールを「最下部」ではなく該当メッセージへ向ける 1 回限りの指示。
   const pendingScrollRef = useRef(null)
+  // 自動スクロールの追従フラグ。ユーザーが上へスクロールしたら追従を止め、
+  // 最下部付近へ戻ったら再開する (生成中の chunk 連打で引き戻されないように)。
+  const stickToBottomRef = useRef(true)
 
   // クロージャ越しに「最新の」activeId / streaming を読むための ref
   // ストリーム中にユーザーがセッション切替したことを検知して、
   // 古いストリームの mutation を捨てるのに使う。
   const activeIdRef = useRef(activeId)
-  useEffect(() => { activeIdRef.current = activeId }, [activeId])
+  useEffect(() => {
+    activeIdRef.current = activeId
+    stickToBottomRef.current = true // セッション切替時は最下部追従に戻す
+  }, [activeId])
 
   // 初期化を Strict Mode の二重実行から守るためのガード
   const initOnceRef = useRef(false)
@@ -899,7 +905,8 @@ function AppInner() {
       }
       // 見つからなければ従来どおり最下部へフォールバック
     }
-    el.scrollTop = el.scrollHeight
+    // ユーザーが上へスクロール中は追従しない (生成中の chunk 連打による引き戻し防止)
+    if (stickToBottomRef.current) el.scrollTop = el.scrollHeight
   }, [messages])
 
   // 他セッションで task が走っている間だけサイドバーを軽く poll してインジケータを最新化
@@ -1012,6 +1019,7 @@ function AppInner() {
   const send = useCallback(async () => {
     const text = input.trim()
     if (!text || streaming || !activeId) return
+    stickToBottomRef.current = true // 送信したら (上を読んでいても) 最下部追従に戻す
 
     // 手動構想モード: input は「お題」。情景/心情/季語が揃っていれば manual_plan で生成
     if (manualMode) {
@@ -1173,7 +1181,13 @@ function AppInner() {
 
         {view === 'chat' && (
         <>
-        <main ref={scrollRef}>
+        <main
+          ref={scrollRef}
+          onScroll={(e) => {
+            const el = e.currentTarget
+            stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+          }}
+        >
           {messages.length === 0 && (
             <div className="empty">
               <p>メッセージを入力してください。</p>
