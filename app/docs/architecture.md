@@ -51,7 +51,7 @@
 |----------|-----------------|-------|----------------|------|
 | frontend | `node:20-alpine` (dev) | 5178 | bind `./frontend`, named `frontend_node_modules` | React + Vite dev server。`/api/*` を backend へ proxy |
 | backend  | `python:3.12-slim` + uv | 8001 | bind `./backend`, named `backend_venv` | FastAPI。SSE 配信、LM Studio 呼び出し、永続化、タスク管理 |
-| mongo    | `mongo:8.0` (公式 latest GA) | 27017 | named `mongo_data` | sessions / tasks / failures コレクション |
+| mongo    | `mongo:8.2.12` (pin。8.0 系は Docker VM kernel 6.19+ で起動拒否 → CLAUDE.md §6.18) | 27017 | named `mongo_data` | sessions / tasks / failures コレクション |
 | redis    | `redis:7-alpine` | 6379 | (なし) | タスクイベントブローカ (Streams `task:{id}:events`) |
 
 LM Studio は **Docker の外** でホストに立てる前提。`host.docker.internal:host-gateway` を `extra_hosts` で渡しているので Linux / macOS どちらでも到達可能。
