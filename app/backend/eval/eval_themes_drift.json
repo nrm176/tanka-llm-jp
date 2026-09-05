@@ -1,0 +1,16 @@
+{
+  "_comment": "動的 few-shot (春アトラクター対策) の end-to-end A/B 用、ドリフト多発テーマの小集合。非春テーマ中心 + 春コントロール 2 件。LM Studio の sustained-load 劣化 (CLAUDE.md §6.13) を避けるため意図的に小さい。使い方: TANKA_DYNAMIC_FEWSHOT=0 で baseline、=1 で treatment を別セッションで回し、最終 season が theme の season_hint に一致するかでドリフト率を比較する。",
+  "_version": 1,
+  "themes": [
+    {"id": "d-sum-01", "season_hint": "夏", "register": "modern",    "concreteness": "abstract", "theme": "夏の夕暮れ"},
+    {"id": "d-sum-02", "season_hint": "夏", "register": "modern",    "concreteness": "concrete", "theme": "海辺の街を見下ろす坂道"},
+    {"id": "d-sum-03", "season_hint": "夏", "register": "classical", "concreteness": "concrete", "theme": "蛍の舞う川辺"},
+    {"id": "d-aut-01", "season_hint": "秋", "register": "classical", "concreteness": "concrete", "theme": "紅葉の散る山道"},
+    {"id": "d-aut-02", "season_hint": "秋", "register": "classical", "concreteness": "concrete", "theme": "名月を仰ぐ宵"},
+    {"id": "d-aut-03", "season_hint": "秋", "register": "modern",    "concreteness": "abstract", "theme": "虫の音に聞く命の儚さ"},
+    {"id": "d-win-01", "season_hint": "冬", "register": "modern",    "concreteness": "abstract", "theme": "冬の寂寥"},
+    {"id": "d-win-02", "season_hint": "冬", "register": "modern",    "concreteness": "concrete", "theme": "炬燵で蜜柑を食べる団欒"},
+    {"id": "d-spr-01", "season_hint": "春", "register": "classical", "concreteness": "concrete", "theme": "散りゆく桜"},
+    {"id": "d-spr-02", "season_hint": "春", "register": "modern",    "concreteness": "abstract", "theme": "新生活への不安と希望"}
+  ]
+}
