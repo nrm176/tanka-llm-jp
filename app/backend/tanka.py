@@ -142,6 +142,12 @@ def _rag_event(examples: list[dict]) -> dict[str, Any]:
     }
 
 
+def _lessons_event(entries: list[dict]) -> dict[str, Any]:
+    # entries は validator.long_term_failure_entries の出力 (raw_output 等を含まない射影)。
+    # プロンプトに注入した教訓と同一ソースなので、UI 表示と注入内容が乖離しない。
+    return {"type": "lessons", "entries": entries}
+
+
 def _score_one(validator, composition: str, season_hint: str | None, kigo_hint: str | None,
                theme: str) -> dict[str, Any]:
     """1 つの出力を検証して、validation イベントに必要な要素を dict で返す。"""
@@ -227,8 +233,11 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
     log.info("plan extracted: season=%s kigo=%s", season_hint, kigo_hint)
 
     # ── 注入ブロックの準備 (長期失敗記憶 + RAG) ──
-    long_term_block = validator.format_long_term_failures(
+    lesson_entries = validator.long_term_failure_entries(
         _load_long_term_failures(db, season_hint, model=model))
+    long_term_block = validator.format_lesson_entries(lesson_entries)
+    if lesson_entries:
+        yield _lessons_event(lesson_entries)
     rag_block, rag_examples = _build_rag(rag, validator, theme, plan, season_hint, kigo_hint)
     if rag_examples:
         yield _rag_event(rag_examples)

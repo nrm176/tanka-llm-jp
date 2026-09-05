@@ -700,3 +700,47 @@ def test_format_long_term_failures():
 
 def test_format_long_term_failures_empty():
     assert validator.format_long_term_failures([]) == ""
+
+
+def test_long_term_failure_entries():
+    failures = [
+        {"theme": "夏の夜", "score": 65, "parsed": {"kigo": "蛍", "season": "夏"},
+         "violations": [
+             {"rule": "mora_count", "severity": "critical", "weight": 10, "message": "x"},
+             {"rule": "kigo_unique", "severity": "major", "weight": 15, "message": "x"},
+         ],
+         "ts": "2026-08-14T12:00:00+00:00"},
+        # schema_invalid 等で parsed が無い / violations が空の失敗
+        {"theme": "冬の朝", "score": 0, "parsed": None, "violations": []},
+    ]
+    entries = validator.long_term_failure_entries(failures)
+    assert entries[0] == {
+        "theme": "夏の夜", "kigo": "蛍", "season": "夏", "score": 65,
+        "rule": "kigo_unique",  # weight 最大の違反
+        "lesson": validator.LESSONS["kigo_unique"],
+        "ts": "2026-08-14T12:00:00+00:00",
+    }
+    assert entries[1]["rule"] is None
+    assert entries[1]["kigo"] is None
+    assert entries[1]["lesson"] == "validator のいずれかのルールに違反"
+    assert entries[1]["ts"] is None
+
+
+def test_long_term_failure_entries_empty():
+    assert validator.long_term_failure_entries([]) == []
+
+
+def test_format_long_term_failures_golden():
+    # prompt ブロックのバイト形式を固定する golden テスト。
+    # このブロックは LLM が実際に見るテキストなので、形式の drift は eval に影響しうる。
+    failures = [
+        {"theme": "夏の夜", "score": 65, "parsed": {"kigo": "蛍", "season": "夏"},
+         "violations": [{"rule": "kigo_unique", "severity": "major", "weight": 15, "message": "x"}]},
+        {"theme": "冬の朝", "score": 0, "parsed": None, "violations": []},
+    ]
+    expected = (
+        "\n【長期失敗記憶 — 過去にあなたがやらかした違反パターン。同じことを繰り返さないこと】\n"
+        f"  失敗 1: お題「夏の夜」 (宣言季語「蛍」) で score=65 → 教訓: {validator.LESSONS['kigo_unique']}\n"
+        "  失敗 2: お題「冬の朝」 で score=0 → 教訓: validator のいずれかのルールに違反\n"
+    )
+    assert validator.format_long_term_failures(failures) == expected

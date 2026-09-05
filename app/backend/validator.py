@@ -716,27 +716,49 @@ def _lesson_for_violations(violations: list[dict]) -> str:
     return LESSONS.get(rule, f"{rule} 違反を避ける")
 
 
-def format_long_term_failures(failures: list[dict]) -> str:
-    """過去の失敗群を、compose プロンプト先頭に挿入する anti-example ブロックに整形。
+def long_term_failure_entries(failures: list[dict]) -> list[dict]:
+    """db.recent_failures(...) の戻り値を構造化教訓エントリへ変換する純関数。
+    prompt ブロック (format_lesson_entries) と SSE "lessons" イベントの共通ソース。
+    UI に見せるものとプロンプトに注入するものを必ず一致させるため、両者はここを経由する。"""
+    entries = []
+    for f in failures:
+        violations = f.get("violations") or []
+        primary = max(violations, key=lambda v: v.get("weight", 0)) if violations else None
+        parsed = f.get("parsed") or {}
+        entries.append({
+            "theme": f.get("theme"),
+            "kigo": parsed.get("kigo"),
+            "season": parsed.get("season"),
+            "score": f.get("score"),
+            "rule": primary.get("rule") if primary else None,
+            "lesson": _lesson_for_violations(violations),
+            "ts": f.get("ts"),  # db._serialize 済み = isoformat str。SSE にそのまま載る
+        })
+    return entries
 
-    failures は db.recent_failures(...) の戻り値 (list[dict]) を想定。
-    各 entry は {theme, parsed, violations, score, ts, ...} を含む。"""
-    if not failures:
+
+def format_lesson_entries(entries: list[dict]) -> str:
+    """構造化教訓エントリを、compose プロンプト先頭に挿入する anti-example ブロックに整形。"""
+    if not entries:
         return ""
     lines = [
         "",
         "【長期失敗記憶 — 過去にあなたがやらかした違反パターン。同じことを繰り返さないこと】",
     ]
-    for i, f in enumerate(failures, 1):
-        theme = f.get("theme", "?")
-        score = f.get("score", "?")
-        lesson = _lesson_for_violations(f.get("violations") or [])
-        kigo_note = ""
-        parsed = f.get("parsed") or {}
-        if parsed.get("kigo"):
-            kigo_note = f" (宣言季語「{parsed.get('kigo')}」)"
-        lines.append(f"  失敗 {i}: お題「{theme}」{kigo_note} で score={score} → 教訓: {lesson}")
+    for i, e in enumerate(entries, 1):
+        theme = e.get("theme") if e.get("theme") is not None else "?"
+        score = e.get("score") if e.get("score") is not None else "?"
+        kigo_note = f" (宣言季語「{e['kigo']}」)" if e.get("kigo") else ""
+        lines.append(f"  失敗 {i}: お題「{theme}」{kigo_note} で score={score} → 教訓: {e['lesson']}")
     return "\n".join(lines) + "\n"
+
+
+def format_long_term_failures(failures: list[dict]) -> str:
+    """過去の失敗群を anti-example ブロックに整形 (long_term_failure_entries の薄い wrapper)。
+
+    failures は db.recent_failures(...) の戻り値 (list[dict]) を想定。
+    各 entry は {theme, parsed, violations, score, ts, ...} を含む。"""
+    return format_lesson_entries(long_term_failure_entries(failures))
 
 
 _SEASON_RE = re.compile(r"季節[:：]\s*(春|夏|秋|冬|新年|雑)")

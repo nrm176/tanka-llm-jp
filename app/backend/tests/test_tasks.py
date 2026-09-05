@@ -18,6 +18,7 @@ def _base_state() -> dict:
         "best_score": None,
         "score_history": [],
         "rag_examples": [],
+        "lessons": [],
     }
 
 
@@ -81,6 +82,26 @@ def test_rag_event_sets_examples():
     s = _base_state()
     tasks.apply_event_to_state(s, {"type": "rag", "examples": [{"text": "x"}]})
     assert s["rag_examples"] == [{"text": "x"}]
+
+
+def test_lessons_event_sets_entries():
+    s = _base_state()
+    entries = [{"theme": "夏の夕暮れ", "kigo": "蛍", "season": "夏", "score": 47,
+                "rule": "season_matches_plan", "lesson": "構想ステップで決めた季節を勝手に変更しない",
+                "ts": "2026-08-14T12:00:00+00:00"}]
+    tasks.apply_event_to_state(s, {"type": "lessons", "entries": entries})
+    assert s["lessons"] == entries
+
+
+def test_lessons_event_producer_consumer_wiring():
+    # producer (_lessons_event) → consumer (reducer) を直結し、"lessons"/"entries" の
+    # キー名が両者で一致していることを固定する (片側だけの rename を検知)
+    import tanka
+    s = _base_state()
+    entries = [{"theme": "夏", "kigo": None, "season": None, "score": 0,
+                "rule": None, "lesson": "validator のいずれかのルールに違反", "ts": None}]
+    tasks.apply_event_to_state(s, tanka._lessons_event(entries))
+    assert s["lessons"] == entries
 
 
 def test_phase_end_accumulates_generation_process():
