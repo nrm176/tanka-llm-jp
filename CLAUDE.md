@@ -264,6 +264,21 @@ validator / reading が fail-loud で起動を止める (silent degrade しな�
   「思考が表示されない」報告が出たら、まず LM Studio 直接プローブで content / reasoning_content の
   配分を観測する (`app/docs/model-compat-qwen3-swallow.md` §6 のプローブ)
 
+### 6.18 mongo:8.0 は Docker VM の kernel 6.19+ で起動を拒否する (2026-09 に実測)
+
+- Docker Desktop の更新で VM kernel が `7.0.12-linuxkit` になり、`mongo:8.0` が
+  `"MongoDB cannot start: Linux kernel versions 6.19 and newer has a known incompatibility"`
+  (SERVER-121912、tcmalloc の rseq バグ) で fatal → mongo が crash loop → 依存する backend/frontend が
+  `Created` のまま **stack 全体が起動不能**になった。8.0 系の最新イメージ (2026-08-18 ビルド) でも同じで、
+  `mongod --version` すら通らない
+- 対策: `docker-compose.yml` を **`mongo:8.2.12` に pin** (起動確認済み)。データ volume はそのまま互換。
+  **FCV (featureCompatibilityVersion) は 8.0 のまま bump しない** — 8.0 系が修正されたら戻せる余地を残す
+- 診断: `docker compose logs mongo | grep '"s":"F"'` の 1 行目を読む / `docker info --format '{{.KernelVersion}}'`
+- イメージ切替前は volume の raw バックアップ:
+  `docker run --rm -v app_mongo_data:/data:ro -v <dir>:/backup alpine tar czf /backup/mongo.tgz -C /data .`
+- 教訓: **`mongo:8.0` のような floating minor tag でも、ホスト側 (Docker VM kernel) の更新で突然壊れる**。
+  stack が起動しないときは、コードより先にインフラ層 (mongo ログ / kernel) を疑う
+
 ---
 
 ## 7. 設計上の重要な決定 (覆さないように)

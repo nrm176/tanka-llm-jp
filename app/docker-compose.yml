@@ -14,7 +14,7 @@
 
 services:
   mongo:
-    image: mongo:8.0
+    image: mongo:8.2.12  # 8.0 系は Docker VM kernel 6.19+ で起動拒否 (SERVER-121912)。FCV は 8.0 のまま (CLAUDE.md §6.18)
     restart: unless-stopped
     volumes:
       - mongo_data:/data/db
