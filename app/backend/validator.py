@@ -105,6 +105,20 @@ class Tanka(BaseModel):
                          validation_alias=AliasChoices(*EMOTION_ALIASES))
 
 
+# 構想下書き (#63) の季節。季語必須の経路なので「雑」は非対応 (ManualPlan と同じ制約)
+PlanSeason = Literal["春", "夏", "秋", "冬", "新年"]
+
+
+class PlanDraft(BaseModel):
+    """LLM が下書きした構想 (#63)。人がレビュー・加筆して manual_plan (kigo/season/image/emotion) に
+    確定させるための中間物。image は候補複数、background は人が読む素材 (compose には渡さない)。"""
+    kigo: str = Field(..., min_length=1, max_length=20)
+    season: PlanSeason
+    image_candidates: list[str] = Field(..., min_length=1, max_length=5)
+    emotion: str = Field(..., min_length=1)
+    background: str = ""
+
+
 # ─── 季語辞書のロード ───
 
 KIGO_DATA_PATH = Path(__file__).parent / "data" / "kigo.json"
@@ -673,10 +687,9 @@ def repair_truncated_json(fragment: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def parse_tanka_json(text: str, meta: dict | None = None) -> Tanka | tuple[None, str]:
-    """LLM の生出力から JSON を取り出して Tanka に変換する。
-    成功なら Tanka、失敗なら (None, error_message) を返す。
-    code fence や前後の散文に robust。
+def _load_json_object(text: str, meta: dict | None = None) -> tuple[dict | None, str | None]:
+    """LLM の生出力から最初の { 〜 最後の } を JSON として読む (parse_tanka_json / parse_plan_draft_json 共通)。
+    code fence や前後の散文に robust。成功なら (dict, None)、失敗なら (None, error_message)。
 
     通常の抽出が失敗したときだけ、末尾切れの救済 (repair_truncated_json) を試す (#65)。
     meta に dict を渡すと、救済が発動した場合に "json_repaired" が True で入る
@@ -708,7 +721,24 @@ def parse_tanka_json(text: str, meta: dict | None = None) -> Tanka | tuple[None,
             return None, err
         if meta is not None:
             meta["json_repaired"] = True
-        log.info("parse_tanka_json: repaired truncated JSON (%d chars)", len(text) - start)
+        log.info("_load_json_object: repaired truncated JSON (%d chars)", len(text) - start)
+    return data, None
+
+
+def _schema_error_message(e: ValidationError) -> str:
+    """ユーザーフレンドリな短いメッセージを作る。"""
+    first_error = e.errors()[0]
+    loc = ".".join(str(x) for x in first_error.get("loc", []))
+    return f"JSON スキーマ違反 ({loc}): {first_error.get('msg', 'unknown')}"
+
+
+def parse_tanka_json(text: str, meta: dict | None = None) -> Tanka | tuple[None, str]:
+    """LLM の生出力から JSON を取り出して Tanka に変換する。
+    成功なら Tanka、失敗なら (None, error_message) を返す。
+    JSON の取り出しと末尾切れ救済 (#65) は _load_json_object に委ねる (meta["json_repaired"])。"""
+    data, err = _load_json_object(text, meta)
+    if data is None:
+        return None, err or _NOT_FOUND_MSG
 
     # キー名の綴り誤り (#68) を検出して記録。alias で受け入れるが、発生率は計測できるようにする
     typos = [k for k in data if k in EMOTION_TYPOS] if isinstance(data, dict) else []
@@ -720,10 +750,56 @@ def parse_tanka_json(text: str, meta: dict | None = None) -> Tanka | tuple[None,
     try:
         return Tanka.model_validate(data)
     except ValidationError as e:
-        # ユーザーフレンドリな短いメッセージを作る
-        first_error = e.errors()[0]
-        loc = ".".join(str(x) for x in first_error.get("loc", []))
-        return None, f"JSON スキーマ違反 ({loc}): {first_error.get('msg', 'unknown')}"
+        return None, _schema_error_message(e)
+
+
+def parse_plan_draft_json(text: str) -> PlanDraft | tuple[None, str]:
+    """LLM の生出力から構想下書き JSON (#63) を取り出して PlanDraft に変換する。
+    成功なら PlanDraft、失敗なら (None, error_message)。parse_tanka_json と同じ robust さ。"""
+    data, err = _load_json_object(text)
+    if data is None:
+        return None, err or "JSON を読めませんでした"
+    try:
+        return PlanDraft.model_validate(data)
+    except ValidationError as e:
+        return None, _schema_error_message(e)
+
+
+def finalize_plan_draft(draft: PlanDraft, *, fixed_kigo: str | None = None
+                        ) -> tuple[PlanDraft, list[dict]]:
+    """構想下書きを確定し、人のレビュー用の警告を付ける (純関数、#63)。
+
+    - fixed_kigo (人が固定した季語) と LLM の kigo が違えば **上書き** して kigo_overridden を警告
+      (季語は人の決定が正。8B は指示された季語を変える癖がある = §6.4)
+    - 辞書に載る季語なら **季節は辞書が正** (LLM の season 主張が違えば season_corrected)。
+      辞書外なら kigo_not_in_dictionary を警告し、上書きはしない (人がレビューで直す)
+    - 各情景候補に宣言季語以外の辞書季語が含まれていれば other_kigo (候補 index 付き)。
+      宣言季語そのものと、それを含む長い辞書語 (蝉 → 蝉しぐれ) は季重なりと見ない。
+      compose が候補文を写すと no_other_kigo (critical) を踏むため、ここで先に見せる
+    警告は {"type": ..., ...} の list。順序: kigo 系 → 候補ごとの other_kigo。"""
+    warnings: list[dict] = []
+    kigo = draft.kigo
+    if fixed_kigo and fixed_kigo != kigo:
+        warnings.append({"type": "kigo_overridden", "kigo": kigo, "fixed_kigo": fixed_kigo})
+        kigo = fixed_kigo
+
+    season = draft.season
+    dict_season = KIGO_DICT.get(kigo)
+    if dict_season is None:
+        warnings.append({"type": "kigo_not_in_dictionary", "kigo": kigo})
+    elif dict_season != season:
+        warnings.append({"type": "season_corrected", "kigo": kigo,
+                         "from": season, "to": dict_season})
+        season = dict_season
+
+    for i, candidate in enumerate(draft.image_candidates):
+        for found, found_season in find_kigo_in_text(candidate):
+            if found == kigo or kigo in found:
+                continue
+            warnings.append({"type": "other_kigo", "candidate": i, "kigo": found, "season": found_season})
+
+    final = draft.model_copy(update={"kigo": kigo, "season": season})
+    return final, warnings
 
 
 # ─── critique フォーマッタ ───

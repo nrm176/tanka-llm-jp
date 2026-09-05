@@ -196,6 +196,59 @@ def _complete_event(plan: str, tanka_obj, score: int, fallback_text: str,
     }
 
 
+# ────────────────────────── 構想の下書き (#63 Phase 1) ──────────────────────────
+
+class PlanDraftError(Exception):
+    """構想下書きの JSON が max_attempts 回とも読めなかった。呼び出し側 (tasks) がタスクを failed にする。"""
+
+
+async def plan_draft_stream(theme: str, *, kigo: str | None = None, season: str | None = None,
+                            n_candidates: int = 3, model: str | None = None,
+                            max_attempts: int = 2) -> AsyncIterator[dict[str, Any]]:
+    """お題 (+季語) から人がレビューする構想を下書きする。短歌本体は詠まない。
+
+    phase_start / chunk / phase_end (phase="plan_draft") を流し、最後に complete を yield する:
+    {kigo, season, image_candidates[], emotion, background, warnings[], attempts, model}。
+    JSON が読めなければ、初回出力 + schema critique を足して 1 回だけ再試行する
+    (固定ベース + 直近 1 ラウンド。会話を蓄積しない = §6.10)。それでも駄目なら PlanDraftError。
+    季語・季節の確定と警告は validator.finalize_plan_draft (純関数) に委ねる。
+    自動経路 (generate_tanka_pipeline の Plan) とはプロンプトもコードも共有しない = eval 不変。"""
+    import validator  # 循環 import 回避のため遅延 (tanka.py の慣例)
+
+    model = model or llm.get_model()
+    base = prompts.build_plan_draft_messages(theme, kigo=kigo, season=season, n_candidates=n_candidates)
+    log.info("plan draft start: theme=%s kigo=%s season=%s n=%d model=%s",
+             theme, kigo, season, n_candidates, model)
+
+    messages = base
+    last_error = "unknown"
+    for attempt in range(max_attempts):
+        text = ""
+        async for ev in _run_llm_phase("plan_draft", messages, attempt=attempt, model=model):
+            if ev["type"] == "phase_end":
+                text = ev["text"]
+            yield ev
+        parsed = validator.parse_plan_draft_json(text)
+        if isinstance(parsed, tuple):
+            last_error = parsed[1]
+            log.info("plan draft attempt %d unparsable: %s", attempt, last_error)
+            messages = base + [
+                {"role": "assistant", "content": text},
+                {"role": "user", "content": validator.format_schema_critique(last_error)},
+            ]
+            continue
+        final, warnings = validator.finalize_plan_draft(parsed, fixed_kigo=kigo)
+        yield {
+            "type": "complete",
+            "kigo": final.kigo, "season": final.season,
+            "image_candidates": final.image_candidates,
+            "emotion": final.emotion, "background": final.background,
+            "warnings": warnings, "attempts": attempt + 1, "model": model,
+        }
+        return
+    raise PlanDraftError(f"構想の JSON 解析に {max_attempts} 回失敗しました: {last_error}")
+
+
 # ────────────────────────── パイプライン本体 ──────────────────────────
 
 async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,

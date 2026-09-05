@@ -12,6 +12,8 @@
 - POST   /api/chat                 チャットタスク作成 → {task_id} を即返す (LLM はバックグラウンド)
 - POST   /api/tanka                短歌タスク作成 → {task_id, session_id} (manual_plan 指定で手動構想モード。
                                    session_id 省略時はセッションを自動作成 #61)
+- POST   /api/plan                 構想下書きタスク作成 → {task_id, session_id} (#63)。お題 (+季語/季節) から
+                                   情景候補・心情・背景を LLM に出させ、人がレビューして manual_plan に渡す
 - GET    /api/tanka/records        全セッション横断の短歌一覧 (新しい順)
 - GET    /api/kigo                 手動構想モード用: 季節 → 季語リスト
 - POST   /api/plan/extract         手動構想モード用: 自由文から季節・季語を辞書抽出 (プリフィル #43)
@@ -148,6 +150,17 @@ class TankaRequest(BaseModel):
     # self-critique フェーズの per-request 上書き (eval/ablation 用)。None なら config.SELF_CRITIQUE_ENABLED
     # に従う (従来挙動)。paired A/B でお題ごとに ON/OFF を交互実行するために必要 (FINDINGS §5.5)
     self_critique: bool | None = None
+
+
+class PlanDraftRequest(BaseModel):
+    """構想下書き (#63): お題 (+任意の季語/季節) から情景候補・心情・背景を LLM に出させる。
+    kigo は kigo.json に載る語のみ (後段の kigo_in_dictionary を踏ませない)。season は kigo があれば
+    辞書から確定 (指定と食い違えば 422)、kigo が無ければ「その季の季語を選ばせる」ヒント。"""
+    session_id: str | None = None                      # None なら自動作成 (#61 と同じ)
+    theme: str = Field(..., min_length=1)
+    kigo: str | None = Field(None, min_length=1, max_length=20)
+    season: Literal["春", "夏", "秋", "冬", "新年"] | None = None
+    n_candidates: int = Field(3, ge=1, le=5)
 
 
 class CreateSessionRequest(BaseModel):
@@ -359,6 +372,44 @@ async def tanka_endpoint(req: TankaRequest) -> dict:
                       model=model, manual_plan=manual_plan, self_critique=req.self_critique)
 
     return {"task_id": task["id"], "session_id": sid, "kind": "tanka"}
+
+
+@app.post("/api/plan")
+async def plan_endpoint(req: PlanDraftRequest) -> dict:
+    """構想下書きタスク (#63 Phase 1) を起動し {task_id, session_id} を即返す。
+    結果は GET /api/tasks/{tid} の result ({kigo, season, image_candidates, emotion, background,
+    warnings, attempts, model})。人がレビュー・加筆して POST /api/tanka の manual_plan に渡す。"""
+    import validator  # 遅延 import (main の常駐依存を増やさない。extract_plan と同じ慣例)
+
+    season = req.season
+    if req.kigo is not None:
+        dict_season = validator.KIGO_DICT.get(req.kigo)
+        if dict_season is None:
+            raise HTTPException(status_code=422,
+                                detail=f"季語「{req.kigo}」は季語辞書 (kigo.json) にありません。"
+                                       f"GET /api/kigo の語から選んでください")
+        if season is not None and season != dict_season:
+            raise HTTPException(status_code=422,
+                                detail=f"季語「{req.kigo}」の季節は「{dict_season}」です (指定: {season})")
+        season = dict_season
+
+    if req.session_id is None:
+        sess = db.create_session()
+    else:
+        sess = db.get_session(req.session_id)
+        if not sess:
+            raise HTTPException(status_code=404, detail="session not found")
+    sid = sess["id"]
+    if db.find_active_task(sid):
+        raise HTTPException(status_code=409, detail="another task is already running for this session")
+
+    model = llm.effective_model(sess)
+    task = db.create_task(sid, kind="plan", input_data={
+        "theme": req.theme, "kigo": req.kigo, "season": season,
+        "n_candidates": req.n_candidates, "model": model})
+    tasks.start_plan(task["id"], sid, req.theme, kigo=req.kigo, season=season,
+                     n_candidates=req.n_candidates, model=model)
+    return {"task_id": task["id"], "session_id": sid, "kind": "plan"}
 
 
 @app.get("/api/kigo")

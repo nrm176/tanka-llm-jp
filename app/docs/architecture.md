@@ -304,11 +304,11 @@ erDiagram
     TASKS {
         ObjectId _id
         string   session_id
-        string   kind            "chat | tanka"
+        string   kind            "chat | tanka | plan"
         string   status          "running | completed | failed | cancelled"
-        object   input           "{mode, model} or {theme, max_refines, model, manual_plan?, self_critique?}"
+        object   input           "{mode, model} | {theme, max_refines, model, manual_plan?, self_critique?} | {theme, kigo, season, n_candidates, model}"
         string   error
-        object   result          "終了時のみ (#61): tanka は complete 相当の軽量 dict, chat は {thinking, answer}"
+        object   result          "終了時のみ (#61): tanka は complete 相当の軽量 dict, chat は {thinking, answer}, plan は下書き (#63)"
         datetime created_at
         datetime updated_at
     }
@@ -430,6 +430,33 @@ SSE を購読しない利用者 (スクリプト / 外部システム) 向けの
 - セッションメッセージ側のフル永続化 (phases の thinking raw / validations 詳細) とは別物。タスク文書は軽量に保つ
 - **同期 POST は意図的に作らない**。1 生成が 2〜4 分かかるため、HTTP と LLM の寿命分離 (§8) を維持し、
   利用者は「POST → task_id → GET でポーリング」の 2 ステップで結果を得る
+
+### `POST /api/plan` → `GET /api/tasks/{tid}` (構想の下書き、#63 Phase 1)
+
+人がレビュー・加筆する構想を LLM に下書きさせる経路。**短歌は詠まない**。お題 (+任意の季語 / 季節) を受け、
+kind=`plan` のタスクを起動する。季語は kigo.json に無ければ 422、季節は季語があれば辞書から確定する。
+
+SSE: `task_meta` → `phase_start` / `chunk` / `phase_end` (phase=`plan_draft`, attempt) → `complete` (または `error`) → `done`。
+result (タスク文書):
+
+```json
+{"kigo": "萩", "season": "秋",
+ "image_candidates": ["山里の稲穂が揺れ、遠くの松林へ風が抜ける", "…", "…"],
+ "emotion": "…", "background": "人が読むための 2〜3 文",
+ "warnings": [{"type": "other_kigo", "candidate": 0, "kigo": "月", "season": "秋"}],
+ "attempts": 1, "model": "llm-jp-4-8b-thinking"}
+```
+
+- `warnings[].type`: `other_kigo` (候補文に宣言外の辞書季語。compose が写すと `no_other_kigo` critical を踏むため先に見せる) /
+  `kigo_overridden` (人が固定した季語と LLM の kigo が違ったので上書き) / `season_corrected` (季節は辞書が正) /
+  `kigo_not_in_dictionary` (上書きせず人に委ねる)。確定と警告は `validator.finalize_plan_draft` (純関数)
+- JSON が読めなければ初回出力 + schema critique を足して **1 回だけ再試行** (固定ベース + 直近 1 ラウンド、§8 の
+  context 方針と同じ)。2 回失敗で `status=failed`
+- プロンプトは `prompts.build_plan_draft_messages`。自動経路の `build_plan_messages` とはコードもプロンプトも独立
+  (eval の比較可能性を守る)。`background` は人が読む素材で compose には渡さない (長文注入は context を圧迫し、
+  8B は一首に全部詰め込もうとする)
+- 想定フロー: `POST /api/plan` → `GET /api/tasks/{tid}` → 人が候補を選び加筆 → `POST /api/tanka {manual_plan}`。
+  Plan 単体は実測 ~9 秒 (compose / refine は各 80〜100 秒) なので、人が直す地点として安い。UI 化は #63 Phase 2
 
 ---
 

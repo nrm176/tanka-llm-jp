@@ -338,6 +338,34 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
         await _finalize(task_id, "failed", error=str(e))
 
 
+# ─── plan タスク (構想の下書き #63) ───
+
+async def _run_plan(task_id: str, session_id: str, theme: str, *, kigo: str | None,
+                    season: str | None, n_candidates: int, model: str | None) -> None:
+    """構想下書き → 結果をタスク文書へ保存 (GET /api/tasks/{tid} で取得)。
+    セッションメッセージには書かない: 下書きは人がレビュー・加筆して manual_plan として
+    POST /api/tanka に渡す中間物で、確定した短歌だけが会話履歴に残る。"""
+    log.info("plan task started: task=%s theme=%s kigo=%s", task_id, theme, kigo)
+    try:
+        result: dict[str, Any] | None = None
+        async for event in tanka.plan_draft_stream(theme, kigo=kigo, season=season,
+                                                   n_candidates=n_candidates, model=model):
+            if event.get("type") == "complete":
+                result = {k: v for k, v in event.items() if k != "type"}
+            if event.get("type") == "phase_end":
+                event = {k: v for k, v in event.items() if k != "raw"}  # raw は SSE に流さない
+            await _emit(task_id, event)
+        await _finalize(task_id, "completed", result=result)
+    except asyncio.CancelledError:
+        await _emit(task_id, {"type": "cancelled"})
+        await _finalize(task_id, "cancelled")
+        raise
+    except Exception as e:
+        log.exception("plan task %s failed", task_id)
+        await _emit(task_id, {"type": "error", "message": str(e)})
+        await _finalize(task_id, "failed", error=str(e))
+
+
 # ─── 起動エントリ (registry 管理) ───
 
 def _register(task_id: str, coro):
@@ -357,6 +385,14 @@ def start_chat(task_id: str, session_id: str, user_message: str, mode: str,
                model: str | None = None) -> asyncio.Task:
     """model はセッション実効モデル (#20)。main.py がタスク作成時に解決して渡す。"""
     return _register(task_id, _run_chat(task_id, session_id, user_message, mode, model=model))
+
+
+def start_plan(task_id: str, session_id: str, theme: str, *, kigo: str | None = None,
+               season: str | None = None, n_candidates: int = 3,
+               model: str | None = None) -> asyncio.Task:
+    """構想下書きタスク (#63)。kigo / season は main.py が辞書で検証・確定してから渡す。"""
+    return _register(task_id, _run_plan(task_id, session_id, theme, kigo=kigo, season=season,
+                                        n_candidates=n_candidates, model=model))
 
 
 def start_tanka(task_id: str, session_id: str, theme: str, max_refines: int,

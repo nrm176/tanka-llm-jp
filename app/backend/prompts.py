@@ -255,6 +255,44 @@ def build_plan_messages(theme: str) -> list[dict]:
     ]
 
 
+def build_plan_draft_messages(theme: str, kigo: str | None = None, season: str | None = None,
+                              n_candidates: int = 3) -> list[dict]:
+    """構想の下書き (#63): 人がレビュー・加筆するための情景候補 + 心情 + 背景を JSON で出させる。
+
+    既存の build_plan_messages (自動経路、自由文 1 案) とは独立した変種で、自動経路のプロンプトは触らない
+    (eval の比較可能性を守る)。季語を渡すと固定し、季節だけならその季の季語を選ばせ、どちらも無ければ
+    お題から選ばせる。背景 (background) は人が読む素材で、compose には渡さない前提 (長文注入は context を
+    圧迫し、8B は一首に全部詰め込もうとして「一情景一心情」が崩れる)。system は静的定数のまま。"""
+    if kigo:
+        constraint = (
+            f"季語: {kigo} (季節: {season or '季語に対応する季節'})\n"
+            f"この季語を必ず用い、別の季語に変更しないこと。\n\n"
+        )
+        kigo_label = f"「{kigo}」"
+    elif season:
+        constraint = f"季節: {season}\nこの季節の季語を一つだけ選ぶこと。\n\n"
+        kigo_label = "選んだ季語"
+    else:
+        constraint = ""
+        kigo_label = "選んだ季語"
+    return [
+        {"role": "system", "content": TANKA_SYSTEM_PROMPT},
+        {"role": "user", "content": (
+            f"お題: {theme}\n"
+            + constraint +
+            "このお題で詠む短歌の構想を下書きしてください。短歌本体はまだ書かないでください。\n"
+            f"- 情景の候補を {n_candidates} 案。各案は一つの場面を一文で描き、互いに視点や景物を変えること\n"
+            f"- 情景候補の文には、{kigo_label}以外の季語 (別の季の景物はもちろん、同じ季の他の季語も) を入れないこと\n"
+            "- 心情は一つの感情を一文で\n"
+            "- 背景 (background) は 2〜3 文。お題と季語からどんな場面・時刻・人の気配を想定したかを書く "
+            "(人が読むための素材で、短歌本文には直接入れない)\n\n"
+            "JSON 形式のみで出力してください (前後に説明を付けない):\n"
+            '{"kigo": "用いる季語", "season": "春|夏|秋|冬|新年", '
+            '"image_candidates": ["情景 1", "情景 2"], "emotion": "一文の心情", "background": "背景 2〜3 文"}'
+        )},
+    ]
+
+
 def format_manual_plan(mp: dict) -> str:
     """人間が指定した構想を、LLM Plan フェーズと同一のテキスト形式に整形する (純関数)。
     build_compose_messages / extract_season_from_plan がそのまま流用できる形にする。"""

@@ -78,6 +78,8 @@ DELETE /api/sessions/{id}        delete
 POST   /api/chat                 create chat task → {task_id} (LLM runs in background)
 POST   /api/tanka                create tanka task → {task_id, session_id}
                                  session_id optional (auto-creates a session), manual_plan for manual-plan mode
+POST   /api/plan                 create plan-draft task → {task_id, session_id}
+                                 theme (+ kigo / season): LLM drafts image candidates + emotion + background for human review
 GET    /api/tasks/{tid}          task status + result once finished (poll here; no SSE needed)
 GET    /api/tasks/{tid}/stream   SSE: phase_start/chunk/phase_end/validation/complete/done (replay + live)
 POST   /api/tasks/{tid}/cancel   cancel a running task
@@ -95,6 +97,19 @@ curl -s localhost:8001/api/tasks/$TID | jq '{status, result}'
 plateau_reached / max_refines_reached / duration_seconds` for tanka tasks and `thinking / answer` for chat
 tasks; it is `null` while running or if the task failed. Pass `manual_plan` (`kigo / season / image / emotion`)
 to skip the LLM planning phase and fix the season word yourself.
+
+Two-step authoring with a human in the loop: let the LLM draft the plan (≈10 s), review and edit it,
+then compose from *your* plan. The draft never writes a poem; `background` is reading material for you
+and is not fed to the composer. `warnings` flags candidates that contain another season word.
+
+```bash
+TID=$(curl -s -X POST localhost:8001/api/plan -H 'Content-Type: application/json' \
+  -d '{"theme":"初秋の風","kigo":"萩"}' | jq -r .task_id)
+curl -s localhost:8001/api/tasks/$TID | jq .result
+# → {kigo, season, image_candidates[], emotion, background, warnings[], attempts, model}
+curl -s -X POST localhost:8001/api/tanka -H 'Content-Type: application/json' \
+  -d '{"theme":"初秋の風","manual_plan":{"kigo":"萩","season":"秋","image":"<edited candidate>","emotion":"<edited>"}}'
+```
 
 ## Configuration (env vars on backend container)
 
