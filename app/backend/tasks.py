@@ -163,6 +163,8 @@ def apply_event_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
     etype = event.get("type")
     if etype == "rag":
         state["rag_examples"] = event.get("examples", [])
+    elif etype == "lessons":
+        state["lessons"] = event.get("entries", [])
     elif etype == "phase_end":
         # 生成過程 (thinking 込み raw) を永続化し、セッション再訪時に再生できるようにする。
         # chunk は蓄積しない (raw に全文が載っているため)。
@@ -236,6 +238,7 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
         "final_score": None,
         "model": None,       # 生成に使ったモデル (#15)
         "rag_examples": [],  # RAG で参照した古典作例
+        "lessons": [],       # compose に注入した長期失敗記憶の教訓 (可視化用)
     }
     try:
         async for event in tanka.generate_tanka_pipeline(theme, max_refines=max_refines, model=model, manual_plan=manual_plan):

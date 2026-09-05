@@ -213,6 +213,22 @@ function TankaMessage({ msg }) {
           </div>
         </details>
       )}
+      {msg.lessons?.length > 0 && (
+        <details className="lessons-block">
+          <summary>🧭 反映した過去の教訓 ({msg.lessons.length})</summary>
+          <div className="lessons-list">
+            {msg.lessons.map((l, i) => (
+              <div key={i} className="lessons-item">
+                <div className="lessons-src">
+                  失敗 {i + 1}: お題「{String(l.theme ?? '?')}」
+                  {l.kigo ? `（宣言季語「${l.kigo}」）` : ''} score={String(l.score ?? '?')}
+                </div>
+                <div className="lessons-text">教訓: {String(l.lesson ?? '')}</div>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
       {msg.phases?.map((p, i) => (
         <PhaseBlock
           key={`${p.phase}-${p.attempt ?? 0}-${i}`}
@@ -687,6 +703,8 @@ function AppInner() {
         } else if (kind === 'tanka') {
           if (event.type === 'rag') {
             updateLastMessage((m) => ({ ...m, ragExamples: event.examples }))
+          } else if (event.type === 'lessons') {
+            updateLastMessage((m) => ({ ...m, lessons: event.entries }))
           } else if (event.type === 'phase_start') {
             updateLastMessage((m) => ({
               ...m,

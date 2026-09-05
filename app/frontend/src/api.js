@@ -245,6 +245,8 @@ export function normalizeMessage(msg) {
       plateauReached: msg.plateau_reached || false,
       bestScore: typeof msg.best_score === 'number' ? msg.best_score : undefined,
       ragExamples: msg.rag_examples || [],
+      // compose に注入された長期失敗記憶の教訓。古いメッセージは未保存 → []
+      lessons: msg.lessons || [],
       complete: msg.tanka
         ? {
             tanka: msg.tanka,
