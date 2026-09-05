@@ -200,7 +200,7 @@
     <ul class="biglist x">
       <li><b>プロンプトで祈る</b><span class="sub">【重要・必須】と強調しても、8B は従わない。願いは制約にならない</span></li>
       <li><b>thinking に頼る</b><span class="sub">「5-7-5-7-7 を数えろ」が思考の暴走を誘発。モデルは自分の出力文字列を観測できないため、数え直すたびに違う答えが出て収束しない</span></li>
-      <li><b>大きいモデルに替える</b><span class="sub">30B でも同じ病理で暴走した（モデル非依存）。実測では 14 分のサイレントハングも</span></li>
+      <li><b>大きいモデルに替える</b><span class="sub">30B でも同じ病理で暴走した（モデル非依存）。content が空のまま全試行失敗という形で現れる</span></li>
     </ul>
     <p class="s-note">では、モデルを賢くするのをやめたらどうなるか。</p>
   </div>
@@ -219,7 +219,7 @@
       <div class="fbox hot">Validate<br><small style="color:var(--dim)">機械採点 (100点満点)</small></div>
       <div class="farr">→</div>
       <div class="fbox okc">合格 ≥ 80</div>
-      <div class="floop">不合格 → critique を添えて Refine → 再び Validate（改善が続く限り無制限・plateau 検知で打ち切り・全試行の最高得点を採用）</div>
+      <div class="floop">不合格 → critique を添えて Refine → 再び Validate（固定回数で打ち切らない・plateau 検知で停止・暴走防止の安全上限 50・全試行の最高得点を採用）</div>
     </div>
     <ul class="biglist" style="margin-top:1.6rem; font-size:1rem">
       <li>出力は <b>JSON 強制</b> → Pydantic で型検証でき、ルールが書ける</li>
@@ -238,7 +238,7 @@
     <div class="stack">
       <div class="panel"><h3>① 採点者</h3>ルール × 重みで減点採点。<code>season_matches_plan −30</code> / <code>kigo_matches_plan −20</code> / <code>kigo_present −25</code> … 構想との整合を「願い」でなく<b>点数で強制</b>する</div>
       <div class="panel"><h3>② 批評家</h3>違反を「なぜダメか・どう直すか」の <b>critique 文</b>に整形し、refine プロンプトへ注入。モデルは具体的な指摘に対してだけ直せばよい</div>
-      <div class="panel"><h3>③ 教師</h3>失敗を DB に記録し、<b>教訓 (LESSONS)</b> として次回以降の生成に注入。「これをやるな」の明示は few-shot 例より 8B に効く</div>
+      <div class="panel"><h3>③ 教師</h3>失敗を DB に記録し、<b>教訓 (LESSONS)</b> として次回以降の生成に注入。悪い例を "お手本" と誤認する 8B への安全策として、生例でなく教訓フレーズに圧縮（効果は補助輪 ── 品質保証の主役は ①②）</div>
     </div>
   </div>
 </section>
@@ -251,7 +251,8 @@
       <h2>「夏の夕暮れ」事件</h2>
       <p class="lead">構想は正しく <b>夏 / 蛍</b> を選んだ。<br>なのに最終出力は <em>春 / 花</em> ── 散る桜の歌。<br><b>47 点</b>（合格 80）の不合格作が「完成」として採用された。</p>
       <div class="quote">花が散る<br>水面灯り 山の影<br>哀しさのみ 自然の理かな</div>
-      <p class="s-note">検証器は毎回正しく検出していた。<b>問題はモデルが従わない</b>こと。</p>
+      <p class="s-note">検証器は毎回正しく検出していた。<b>問題はモデルが従わない</b>こと。<br>
+      ※ 当時は refine に固定上限のある旧設計（試行3 で打ち切り）── plateau 方式への移行はこの事件後。</p>
     </div>
     <div>
       <div class="bars">
@@ -280,6 +281,7 @@
       <tr><td class="l">∅（構想抽出失敗）</td><td class="pink">5</td><td class="mut">·</td><td class="mut">·</td><td class="mut">·</td><td>0%</td></tr>
     </table>
     </div>
+    <p class="s-note" style="margin-top:.7rem">※ 秋の 1 件は出力の季抽出に失敗（∅）── 表では列を省略。これを含めて計 52 件・秋 6/11 = 55%。</p>
     <ul class="biglist" style="margin-top:1.5rem; font-size:1.05rem">
       <li>非春の構想の <em>37%</em> が春へ転落。春の構想は <b>100%</b> 春のまま（出られない・吸い込む）</li>
       <li>夏⇄秋⇄冬の横滑りは <b>0 件</b> ── 誤りは必ず春への<b>一方通行</b></li>
@@ -310,7 +312,8 @@
       </div>
     </div>
     <p class="s-note">「季節の合う例を参考にする」のではなく、<b>先頭の最も鮮烈な例そのものへ collapse</b> していた。<br>
-    おまけ: RAG が注入した参考歌の冒頭も「<b>春過ぎて</b>」（冒頭の歌）── 春磁石が 2 つ並んでいた。</p>
+    おまけ: RAG が注入した参考歌の冒頭も「<b>春過ぎて</b>」（冒頭の歌）── 春の磁石が目前に 2 つ並んで見えた。<br>
+    ただし後の追試で、主磁石（few-shot #1）を断てば RAG 単独ではドリフトしないことも確認済み（9/9 注入で転落 0）。</p>
   </div>
 </section>
 
@@ -319,7 +322,7 @@
   <div class="inner">
     <div class="kicker pink">発見 ① ── 対策と実証</div>
     <h2>磁石を隠す ── 動的 few-shot</h2>
-    <p class="lead">構想の季に一致する例を <b>1 ペアだけ</b> 見せ、他季（特に春）の磁石をプロンプトから消す。<br>統制実験（同一構想・few-shot 切替のみ・非春 4 テーマ × 3 反復 = 24 試行）:</p>
+    <p class="lead">構想の季に一致する例を <b>1 ペアだけ</b> 見せ、他季（特に春）の磁石をプロンプトから消す。<br>統制実験（同一構想・few-shot 切替のみ・非春 4 テーマ × 3 反復 × OFF/ON = 24 試行）:</p>
     <div class="bignum">
       <span class="n pink">67<small style="font-size:.45em">%</small><span class="cap">OFF: 四季全部見せる（従来）<br>春へ転落 8/12</span></span>
       <span class="arr">→</span>
@@ -353,13 +356,14 @@
     <div class="tbl-wrap">
     <table>
       <tr><th class="l">model</th><th>一発合格率 (first-pass)</th><th>最終 avg スコア</th><th>zero 出力率</th></tr>
-      <tr><td class="l">llm-jp-4-8b-thinking</td><td><b>75%</b> 🥇</td><td>77.2 🥉</td><td style="color:var(--shu)"><b>17%</b></td></tr>
+      <tr><td class="l">llm-jp-4-8b-thinking</td><td><b>75%</b> 🥇</td><td>77.2</td><td style="color:var(--shu)"><b>17%</b></td></tr>
       <tr><td class="l">gemma-3-27b</td><td>42%</td><td>80.0</td><td class="okv">0%</td></tr>
       <tr><td class="l">gpt-oss-20b</td><td style="color:var(--shu)"><b>8%</b> 最下位</td><td class="okv"><b>84.5</b> 🥇</td><td class="okv">0%</td></tr>
     </table>
     </div>
+    <p class="s-note" style="margin-top:.6rem">※ n=12・単一 run（ノイズ下限 ±5.6）。有意差は gpt-oss vs llm-jp の +7.3 のみ ── llm-jp と gemma の差はノイズ内。</p>
     <ul class="biglist" style="margin-top:1.5rem; font-size:1.05rem">
-      <li>一発の実力 <b>最下位 (8%)</b> の gpt-oss が、refine ループを経ると <em>最高品質</em> に磨き上がる</li>
+      <li>一発の実力 <b>最下位 (8%)</b> の gpt-oss が、refine ループを経ると <em>最高 avg</em> に磨き上がる（質の天井は依然 llm-jp）</li>
       <li>一発の実力 <b>最強 (75%)</b> の llm-jp は、thinking 暴走による zero 出力 17% が足を引く</li>
       <li>外部検証ループが「素の弱さ」を吸収し、<b>応答性 × 無事故性</b> を品質に翻訳した</li>
     </ul>
