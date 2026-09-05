@@ -308,7 +308,7 @@ validator / reading が fail-loud で起動を止める (silent degrade しな�
 ### 自動テスト (Phase 2 で導入)
 
 ```bash
-# 単体テスト (164 ケース: validator / tasks reducer / db 変換 / llm 合流・救済 / thinking cap 等。副作用ゼロなので LLM/DB 不要)
+# 単体テスト (175 ケース: validator / tasks reducer / db 変換 / llm 合流・救済 / thinking cap 等。副作用ゼロなので LLM/DB 不要)
 cd app/backend && uv run pytest -q
 ```
 
@@ -353,6 +353,8 @@ curl -sN "http://localhost:8001/api/tasks/$TID/stream" | head -20
 ```
 
 破壊的変更は **必ず docker compose 上で動作確認** (`docker compose restart backend` で reload)。
+なお backend は `uvicorn --reload` で動いており、`app/backend/` 配下の **`.py` 保存 (tests/ 含む) で自動再起動**する —
+restart は不要だが、**実行中の生成タスクは再起動で cancelled になる**。eval や e2e を走らせている間は `.py` を保存しないこと。
 
 ---
 

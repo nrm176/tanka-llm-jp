@@ -306,7 +306,7 @@ erDiagram
         string   session_id
         string   kind            "chat | tanka"
         string   status          "running | completed | failed | cancelled"
-        object   input           "{mode} or {theme, max_refines}"
+        object   input           "{mode} or {theme, max_refines, manual_plan?, self_critique?}"
         string   error
         datetime created_at
         datetime updated_at
@@ -679,7 +679,7 @@ TANKA_SELF_CRITIQUE=0 docker compose up -d backend   # 設定を変えて backen
 指標: 初回合格率 / 総合合格率 / 平均 attempt 数 / 平均最終スコア / plateau 率 /
 スコア分布 / ルール別違反頻度。詳細は [`eval/README.md`](../backend/eval/README.md)。
 
-`validator` は副作用ゼロの純関数集合なので pytest で単体テスト可能 (`uv run pytest`、164 ケース。validator 以外の純関数部分も含む)。
+`validator` は副作用ゼロの純関数集合なので pytest で単体テスト可能 (`uv run pytest`、175 ケース。validator 以外の純関数部分も含む)。
 
 ---
 

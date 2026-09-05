@@ -197,7 +197,8 @@ def _complete_event(plan: str, tanka_obj, score: int, fallback_text: str,
 
 async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
                                   model: str | None = None,
-                                  manual_plan: dict | None = None) -> AsyncIterator[dict[str, Any]]:
+                                  manual_plan: dict | None = None,
+                                  self_critique: bool | None = None) -> AsyncIterator[dict[str, Any]]:
     """短歌生成パイプライン。改善が続く限り refine し、全 attempt の最高 score を最終結果に採用する。
     manual_plan を渡すと LLM Plan フェーズをスキップし、人間が立てた構想 (季語/季節/情景/心情) を
     そのまま compose に流す (手動構想モード)。"""
@@ -265,7 +266,8 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
         yield ev
 
     # ── self-critique (Phase 1 B4, 任意。失敗しても初稿で続行) ──
-    if config.SELF_CRITIQUE_ENABLED:
+    # self_critique の per-request 上書き (eval 用)。None なら env 設定に従う = 従来挙動と同一
+    if config.SELF_CRITIQUE_ENABLED if self_critique is None else self_critique:
         sc_messages = compose_messages + [
             {"role": "assistant", "content": composition},
             {"role": "user", "content": prompts.SELF_CRITIQUE_USER},

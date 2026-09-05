@@ -142,6 +142,9 @@ class TankaRequest(BaseModel):
     max_refines: int | None = Field(None, ge=0, le=500)
     # 指定すると LLM Plan フェーズをスキップし、この構想で compose する (手動構想モード)
     manual_plan: ManualPlan | None = None
+    # self-critique フェーズの per-request 上書き (eval/ablation 用)。None なら config.SELF_CRITIQUE_ENABLED
+    # に従う (従来挙動)。paired A/B でお題ごとに ON/OFF を交互実行するために必要 (FINDINGS §5.5)
+    self_critique: bool | None = None
 
 
 class CreateSessionRequest(BaseModel):
@@ -342,9 +345,9 @@ async def tanka_endpoint(req: TankaRequest) -> dict:
     db.append_message(req.session_id, {"kind": "user", "content": f"tanka:{req.theme}"})
     task = db.create_task(req.session_id, kind="tanka", input_data={
         "theme": req.theme, "max_refines": req.max_refines, "model": model,
-        "manual_plan": manual_plan})
+        "manual_plan": manual_plan, "self_critique": req.self_critique})
     tasks.start_tanka(task["id"], req.session_id, req.theme, req.max_refines,
-                      model=model, manual_plan=manual_plan)
+                      model=model, manual_plan=manual_plan, self_critique=req.self_critique)
 
     return {"task_id": task["id"], "session_id": req.session_id, "kind": "tanka"}
 

@@ -1,0 +1,90 @@
+{
+  "_comment": "モデル A/B 用: 標準セット v1 から四季 x 3 題を id ごと転記した 12 題サブセット (cap A/B #22 と同一構成)",
+  "_version": 1,
+  "themes": [
+    {
+      "id": "spr-01",
+      "season_hint": "春",
+      "register": "classical",
+      "concreteness": "concrete",
+      "theme": "散りゆく桜"
+    },
+    {
+      "id": "spr-02",
+      "season_hint": "春",
+      "register": "classical",
+      "concreteness": "abstract",
+      "theme": "春の別れ"
+    },
+    {
+      "id": "spr-03",
+      "season_hint": "春",
+      "register": "modern",
+      "concreteness": "concrete",
+      "theme": "通学路の桜並木"
+    },
+    {
+      "id": "sum-01",
+      "season_hint": "夏",
+      "register": "classical",
+      "concreteness": "concrete",
+      "theme": "夕立のあとの虹"
+    },
+    {
+      "id": "sum-02",
+      "season_hint": "夏",
+      "register": "classical",
+      "concreteness": "abstract",
+      "theme": "短い夏の夜への惜別"
+    },
+    {
+      "id": "sum-03",
+      "season_hint": "夏",
+      "register": "modern",
+      "concreteness": "concrete",
+      "theme": "海辺の街を見下ろす坂道"
+    },
+    {
+      "id": "aut-01",
+      "season_hint": "秋",
+      "register": "classical",
+      "concreteness": "concrete",
+      "theme": "紅葉の散る山道"
+    },
+    {
+      "id": "aut-02",
+      "season_hint": "秋",
+      "register": "classical",
+      "concreteness": "abstract",
+      "theme": "秋風に覚える物の哀れ"
+    },
+    {
+      "id": "aut-03",
+      "season_hint": "秋",
+      "register": "modern",
+      "concreteness": "concrete",
+      "theme": "夜更けのコンビニの灯り"
+    },
+    {
+      "id": "win-01",
+      "season_hint": "冬",
+      "register": "classical",
+      "concreteness": "concrete",
+      "theme": "降りしきる雪"
+    },
+    {
+      "id": "win-02",
+      "season_hint": "冬",
+      "register": "classical",
+      "concreteness": "abstract",
+      "theme": "冬の寂寥"
+    },
+    {
+      "id": "win-03",
+      "season_hint": "冬",
+      "register": "modern",
+      "concreteness": "concrete",
+      "theme": "凍てつく窓ガラスの結露"
+    }
+  ]
+}

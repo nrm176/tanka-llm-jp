@@ -221,7 +221,8 @@ def apply_event_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
 
 
 async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int,
-                     model: str | None = None, manual_plan: dict | None = None) -> None:
+                     model: str | None = None, manual_plan: dict | None = None,
+                     self_critique: bool | None = None) -> None:
     """tanka:お題 のユーザーメッセージは既に DB に書かれている前提。
     パイプライン実行 → 完成短歌を DB に保存。"""
     log.info("tanka task started: task=%s theme=%s", task_id, theme)
@@ -249,7 +250,8 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
         "lessons": [],       # compose に注入した長期失敗記憶の教訓 (可視化用)
     }
     try:
-        async for event in tanka.generate_tanka_pipeline(theme, max_refines=max_refines, model=model, manual_plan=manual_plan):
+        async for event in tanka.generate_tanka_pipeline(theme, max_refines=max_refines, model=model, manual_plan=manual_plan,
+                                                           self_critique=self_critique):
             etype = event.get("type")
             apply_event_to_state(final_state, event)
 
@@ -322,8 +324,11 @@ def start_chat(task_id: str, session_id: str, user_message: str, mode: str,
 
 
 def start_tanka(task_id: str, session_id: str, theme: str, max_refines: int,
-                model: str | None = None, manual_plan: dict | None = None) -> asyncio.Task:
+                model: str | None = None, manual_plan: dict | None = None,
+                self_critique: bool | None = None) -> asyncio.Task:
     """model はセッション実効モデル (#20)。main.py がタスク作成時に解決して渡す。
-    manual_plan を渡すと LLM Plan フェーズをスキップする (手動構想モード)。"""
+    manual_plan を渡すと LLM Plan フェーズをスキップする (手動構想モード)。
+    self_critique は per-request 上書き (eval 用、None なら config に従う)。"""
     return _register(task_id, _run_tanka(task_id, session_id, theme, max_refines,
-                                         model=model, manual_plan=manual_plan))
+                                         model=model, manual_plan=manual_plan,
+                                         self_critique=self_critique))

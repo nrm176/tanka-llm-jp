@@ -1,0 +1,14 @@
+{
+  "_comment": "issue #11 (新年 few-shot gap) の focused A/B 用サブセット。new-01〜04 は eval_themes.json v1 から id ごと転記 (標準セットの過去結果と直接比較可能)。new-05〜08 はサンプル数を増やすための追加 (お題に辞書 new_year 季語を含め、plan が 季節:新年 を出しやすくしてある)。使い方: ./eval.sh <variant> eval_themes_newyear.json",
+  "_version": 1,
+  "themes": [
+    {"id": "new-01", "season_hint": "新年", "register": "classical", "concreteness": "concrete", "theme": "初日の出を仰ぐ"},
+    {"id": "new-02", "season_hint": "新年", "register": "modern", "concreteness": "abstract", "theme": "元日の朝の清新な気持ち"},
+    {"id": "new-03", "season_hint": "新年", "register": "classical", "concreteness": "concrete", "theme": "門松の立つ家"},
+    {"id": "new-04", "season_hint": "新年", "register": "modern", "concreteness": "concrete", "theme": "初詣の長い行列"},
+    {"id": "new-05", "season_hint": "新年", "register": "modern", "concreteness": "concrete", "theme": "屠蘇を酌み交わす家族の朝"},
+    {"id": "new-06", "season_hint": "新年", "register": "modern", "concreteness": "abstract", "theme": "初夢から覚めた朝の余韻"},
+    {"id": "new-07", "season_hint": "新年", "register": "classical", "concreteness": "concrete", "theme": "窓辺に咲く福寿草"},
+    {"id": "new-08", "season_hint": "新年", "register": "modern", "concreteness": "concrete", "theme": "賀状を書く夜の静けさ"}
+  ]
+}

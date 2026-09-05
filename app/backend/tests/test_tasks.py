@@ -157,6 +157,7 @@ def test_phase_end_missing_duration_defaults_to_none():
     assert s["phases"][0]["duration_seconds"] is None
 
 
+
 # ─── _run_chat は complete イベントの thinking/answer を保存する (#54) ───
 
 def test_run_chat_persists_complete_event_not_raw_resplit(monkeypatch):
@@ -185,3 +186,32 @@ def test_run_chat_persists_complete_event_not_raw_resplit(monkeypatch):
     assert saved["kind"] == "assistant"
     assert saved["content"] == tanka.CHAT_TRUNCATED_NOTICE
     assert saved["thinking"] == "長い思考…"
+
+
+# ─── self_critique の per-request 上書きが pipeline まで届く (#57) ───
+
+def test_run_tanka_threads_self_critique_override_to_pipeline(monkeypatch):
+    """paired A/B (eval-paired.sh) はお題ごとに ON/OFF を交互に投げる。start_tanka → _run_tanka →
+    generate_tanka_pipeline へ self_critique がそのまま渡ること (None = 従来どおり config 依存)。"""
+    import asyncio
+
+    captured = {}
+
+    async def fake_pipeline(theme, max_refines=None, model=None, manual_plan=None, self_critique=None):
+        captured["self_critique"] = self_critique
+        yield {"type": "complete", "tanka": "a\nb\nc\nd\ne", "plan": "p", "moras": [5, 7, 5, 7, 7],
+               "kigo": "蛍", "season": "夏", "image": "i", "emotion": "e", "score": 90, "model": model}
+
+    async def noop_async(*a, **k):
+        return None
+
+    monkeypatch.setattr(tasks.tanka, "generate_tanka_pipeline", fake_pipeline)
+    monkeypatch.setattr(tasks.db, "append_message", lambda sid, msg: None)
+    monkeypatch.setattr(tasks.db, "update_task", lambda *a, **k: None)
+    monkeypatch.setattr(tasks.q, "add_event", noop_async)
+    monkeypatch.setattr(tasks.q, "expire_stream", noop_async)
+
+    asyncio.run(tasks._run_tanka("t1", "s1", "夏", None, model="m", self_critique=False))
+    assert captured["self_critique"] is False
+    asyncio.run(tasks._run_tanka("t2", "s1", "夏", None, model="m"))
+    assert captured["self_critique"] is None  # 未指定 = 従来どおり config に従う
