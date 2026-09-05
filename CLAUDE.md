@@ -263,6 +263,10 @@ validator / reading が fail-loud で起動を止める (silent degrade しな�
 - 教訓: **思考の流れ方はアプリではなく LM Studio 側の実装詳細**であり、更新で変わりうる。
   「思考が表示されない」報告が出たら、まず LM Studio 直接プローブで content / reasoning_content の
   配分を観測する (`app/docs/model-compat-qwen3-swallow.md` §6 のプローブ)
+- 【追記 #54】**詩歌に関する質問は chat でも thinking 暴走を誘発する** (和歌の質問で思考 39k 字が止まらず
+  手動キャンセル)。chat にも completion 上限 `TANKA_CHAT_MAX_COMPLETION_TOKENS` (既定 8192 = #22 と同じ) を
+  適用済み。上限到達で思考のみに終わった場合は思考を thinking に残し、回答には案内文を出す
+  (`tanka.CHAT_TRUNCATED_NOTICE`)。`tasks._run_chat` は complete イベントの thinking/answer を保存する
 
 ### 6.18 mongo:8.0 は Docker VM の kernel 6.19+ で起動を拒否する (2026-09 に実測)
 

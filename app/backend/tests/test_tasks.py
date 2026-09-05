@@ -155,3 +155,33 @@ def test_phase_end_missing_duration_defaults_to_none():
     s = _base_state()
     tasks.apply_event_to_state(s, {"type": "phase_end", "phase": "plan", "text": "t"})
     assert s["phases"][0]["duration_seconds"] is None
+
+
+# ─── _run_chat は complete イベントの thinking/answer を保存する (#54) ───
+
+def test_run_chat_persists_complete_event_not_raw_resplit(monkeypatch):
+    """上限到達で思考のみだったチャットは、raw の再分割 (= 思考全文が content になる) ではなく
+    complete イベントの (thinking=思考, answer=案内文) を保存すること。"""
+    import asyncio
+    import tanka
+
+    saved = {}
+
+    async def fake_chat_stream(messages, mode="normal", model=None):
+        yield {"type": "chunk", "text": "長い思考…"}
+        yield {"type": "complete", "thinking": "長い思考…", "answer": tanka.CHAT_TRUNCATED_NOTICE}
+
+    async def noop_async(*a, **k):
+        return None
+
+    monkeypatch.setattr(tasks.tanka, "chat_stream", fake_chat_stream)
+    monkeypatch.setattr(tasks.db, "get_session", lambda sid: {"messages": []})
+    monkeypatch.setattr(tasks.db, "append_message", lambda sid, msg: saved.update(msg))
+    monkeypatch.setattr(tasks.db, "update_task", lambda *a, **k: None)
+    monkeypatch.setattr(tasks.q, "add_event", noop_async)
+    monkeypatch.setattr(tasks.q, "expire_stream", noop_async)
+
+    asyncio.run(tasks._run_chat("t1", "s1", "和歌を教えて", "normal", model="m"))
+    assert saved["kind"] == "assistant"
+    assert saved["content"] == tanka.CHAT_TRUNCATED_NOTICE
+    assert saved["thinking"] == "長い思考…"

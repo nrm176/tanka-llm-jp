@@ -348,15 +348,27 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
 
 # ────────────────────────── 通常チャット ──────────────────────────
 
+# 上限到達で content に到達しなかった (思考のみで終わった) チャットの案内文 (#54)。
+# 思考全文を回答バブルに流し込まず、thinking 側に残して回答はこれにする。
+CHAT_TRUNCATED_NOTICE = "（思考が長くなりすぎて回答に到達しませんでした。質問を短くするか、もう一度お試しください）"
+
+
 async def chat_stream(user_messages: list[dict], mode: str = "normal",
                       model: str | None = None) -> AsyncIterator[dict[str, Any]]:
     """単発チャットをストリームし chunk と complete を yield する。
-    model はタスク作成時に解決済みのセッション実効モデル (#20)。未指定はグローバル現在値。"""
+    model はタスク作成時に解決済みのセッション実効モデル (#20)。未指定はグローバル現在値。
+    complete の thinking/answer が正 (tasks._run_chat はこれを保存する)。"""
     system = prompts.TANKA_SYSTEM_PROMPT if mode == "tanka" else prompts.NORMAL_SYSTEM_PROMPT
     messages = [{"role": "system", "content": system}, *user_messages]
     raw = ""
-    async for delta in llm.stream_completion(messages, model=model):
+    meta: dict[str, Any] = {}
+    # completion 上限 (#54): 詩歌の質問は chat でも thinking 暴走を誘発する。0/None なら無制限
+    async for delta in llm.stream_completion(
+            messages, model=model, max_tokens=config.CHAT_MAX_COMPLETION_TOKENS or None, meta=meta):
         raw += delta
         yield {"type": "chunk", "text": delta}
     reasoning, answer = llm.split_harmony(raw)
+    if meta.get("reasoning_separated") and reasoning is None:
+        # マーカー未注入 = content が一度も来なかった (上限到達で思考のみ)。raw 全体が思考
+        reasoning, answer = (raw.strip() or None), CHAT_TRUNCATED_NOTICE
     yield {"type": "complete", "thinking": reasoning, "answer": answer}

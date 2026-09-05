@@ -61,3 +61,6 @@ DYNAMIC_FEWSHOT = env_bool("TANKA_DYNAMIC_FEWSHOT", True)
 # 悪化したため不採用。8192 (≈16-24k chars) は観測分布 (p90=13.7k chars, max 20k+ censored) の
 # 検閲された尾 = 真の暴走 (実測 31k chars 超のループ) と context 超過だけを止める。0 で無効。
 MAX_COMPLETION_TOKENS = env_int("TANKA_MAX_COMPLETION_TOKENS", 8192)
+# 通常チャットの completion 上限 (#54)。詩歌に関する質問は chat でも thinking 暴走を誘発する
+# (実測: 和歌の質問で思考 39k 字が止まらず手動キャンセル)。既定は #22 と同じ 8192。0 で無効
+CHAT_MAX_COMPLETION_TOKENS = env_int("TANKA_CHAT_MAX_COMPLETION_TOKENS", 8192)
