@@ -109,14 +109,22 @@ async def _run_chat(task_id: str, session_id: str, user_message: str, mode: str,
         history_db = sess.get("messages", [])
         api_messages = _db_messages_to_api(history_db)
 
+        complete: dict[str, Any] | None = None
         async for event in tanka.chat_stream(api_messages, mode=mode, model=model):
             etype = event.get("type")
             if etype == "chunk":
                 raw += event.get("text", "")
+            elif etype == "complete":
+                complete = event
             await _emit(task_id, event)
 
-        # complete イベントが出たあと: 最終 assistant message を保存
-        thinking, answer = llm.split_harmony(raw)
+        # complete イベントが出たあと: 最終 assistant message を保存。
+        # complete の thinking/answer を正とする (#54: 思考のみで上限到達した場合の案内文を含む)。
+        # raw の再分割は complete が無い異常時のフォールバック
+        if complete is not None:
+            thinking, answer = complete.get("thinking"), complete.get("answer") or ""
+        else:
+            thinking, answer = llm.split_harmony(raw)
         db.append_message(session_id, {
             "kind": "assistant",
             "content": answer,
