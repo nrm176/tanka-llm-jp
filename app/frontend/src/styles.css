@@ -1083,6 +1083,7 @@ textarea:disabled { color: #999; }
 .tg-foot { display: flex; align-items: center; gap: 8px; margin-top: auto; font-size: 11px; color: #999; }
 .tg-date { flex: 1; }
 .tg-attempts { font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.tg-duration { font-variant-numeric: tabular-nums; flex-shrink: 0; }
 .tg-open {
   border: 1px solid #ddd; background: #fff; border-radius: 6px; padding: 3px 8px;
   font-size: 11px; color: #444; cursor: pointer; font-family: inherit; flex-shrink: 0;

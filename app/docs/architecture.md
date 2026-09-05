@@ -393,12 +393,13 @@ SSE 配信側は `XREAD BLOCK 5000 STREAMS task:{tid}:events 0-0` で頭から�
 | `task_meta` | task_id, kind, session_id, status | 接続直後の初期情報 |
 | `phase_start` | phase ("plan"\|"compose"\|"self_critique"\|"refine"), attempt? | フェーズ開始 |
 | `chunk` | phase, attempt?, text | LLM 生 delta (フェーズタグ付き) |
-| `phase_end` | phase, attempt?, text | フェーズ完了 (整形後本文) |
+| `phase_end` | phase, attempt?, text, duration_seconds | フェーズ完了 (整形後本文 + 所要秒 #27) |
 | `validation` | attempt, score, errors, warnings, violations, resolved | 検証結果 |
 | `plateau_reached` | best_score, history | 改善なしで打ち切り |
 | `max_refines_reached` | best_score | HARD_CAP=50 到達 (稀) |
 | `complete` | tanka, plan, moras, kigo, season, image, emotion, score | 最終結果 |
-| `cancelled` / `error` / `done` | 同上 | |
+| `cancelled` / `error` | 同上 | |
+| `done` | status, duration_seconds? | 終了マーカー + 全体所要秒 (#27)。complete より後に流れるため、ライブ UI は done で完成ブロックに所要を後付けする |
 
 フロント (`api.js` の `streamTask`) は POST 不可制約を回避するため、`EventSource` ではなく `fetch + ReadableStream` で手動 SSE パース。
 

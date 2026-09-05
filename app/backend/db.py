@@ -464,13 +464,51 @@ def _aggregate_tanka_metrics(tanka_msgs: list[dict]) -> dict[str, Any]:
 # 全セッションの kind=="tanka" メッセージをフラットな閲覧用レコードへ変換する。
 # compute_metrics と同じく個人利用スケール (数百セッション) 前提の素朴な全件走査で十分。
 
+def _as_utc_datetime(value) -> datetime | None:
+    """created_at (naive/aware datetime または isoformat 文字列) を aware UTC に正規化する。
+    Mongo 直読みは naive UTC datetime、_serialize 済みは isoformat 文字列で来るため両対応。"""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _derive_duration(msg: dict, prev_user_created_at) -> tuple[float | None, bool]:
+    """(所要秒, 推定かどうか) を返す (#27)。
+
+    測定値 (msg.duration_seconds) があればそれを採用。無い旧データは、直前の user
+    メッセージ (tanka:お題) との created_at 差分から導出する — user メッセージはタスク作成時、
+    tanka メッセージは完了時に append されるため、差分 ≈ 生成の壁時計時間になる。"""
+    measured = msg.get("duration_seconds")
+    if isinstance(measured, (int, float)) and not isinstance(measured, bool) and measured >= 0:
+        return float(measured), False
+    created = _as_utc_datetime(msg.get("created_at"))
+    prev = _as_utc_datetime(prev_user_created_at)
+    if created is None or prev is None:
+        return None, False
+    seconds = (created - prev).total_seconds()
+    if seconds < 0:
+        return None, False
+    return round(seconds, 2), True
+
+
 def tanka_record_from_message(
-    session_id: str, session_title: str, msg: dict, message_index: int
+    session_id: str, session_title: str, msg: dict, message_index: int,
+    prev_user_created_at=None,
 ) -> dict | None:
     """tanka メッセージ 1 件を一覧表示用のフラットなレコードへ変換する純関数。
 
     message_index はセッション内 messages 配列の添字。フロントが「会話を開く」で
     該当メッセージへスクロールするのに使う (メッセージは append-only なので安定)。
+
+    prev_user_created_at は直前の user メッセージの created_at (#27)。測定値のない
+    旧データの所要時間をここから導出する (iter_tanka_records が渡す)。
 
     本文 (tanka) を持たないメッセージは閲覧対象ではないので None を返す
     (complete 前に失敗したタスクは保存されないが、古いデータへの防御)。"""
@@ -483,6 +521,7 @@ def tanka_record_from_message(
         if created.tzinfo is None:
             created = created.replace(tzinfo=timezone.utc)
         created = created.isoformat()
+    duration, estimated = _derive_duration(msg, prev_user_created_at)
     score = msg.get("final_score")
     return {
         "session_id": session_id,
@@ -501,6 +540,8 @@ def tanka_record_from_message(
         "plateau_reached": bool(msg.get("plateau_reached")),
         "max_refines_reached": bool(msg.get("max_refines_reached")),
         "created_at": created,
+        "duration_seconds": duration,   # 生成所要秒 (#27)。導出も不能な場合は None
+        "duration_estimated": estimated,  # True = user メッセージとの差分からの推定 (旧データ)
     }
 
 
@@ -509,10 +550,14 @@ def iter_tanka_records(session_id: str, session_title: str, messages: list[dict]
 
     message_index には tanka の連番ではなく **messages 配列の添字** が入る
     (user メッセージ等を含めた位置。フロントの DOM 位置決めと 1:1 対応)。"""
+    prev_user_created_at = None  # 直近の user メッセージの created_at (#27: 旧データの所要導出用)
     for i, m in enumerate(messages):
-        rec = tanka_record_from_message(session_id, session_title, m, i)
+        rec = tanka_record_from_message(session_id, session_title, m, i,
+                                        prev_user_created_at=prev_user_created_at)
         if rec:
             yield rec
+        if m.get("kind") == "user":
+            prev_user_created_at = m.get("created_at")
 
 
 def list_tanka_records() -> list[dict]:

@@ -255,6 +255,8 @@ export function normalizeMessage(msg) {
             image: msg.image,
             emotion: msg.emotion,
             score: typeof msg.final_score === 'number' ? msg.final_score : undefined,
+            // 生成所要秒 (#27)。旧データは未保存 → undefined (非表示)
+            durationSeconds: typeof msg.duration_seconds === 'number' ? msg.duration_seconds : undefined,
           }
         : null,
       streaming: false,

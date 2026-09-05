@@ -22,6 +22,7 @@ import {
   streamTask,
   switchModel,
 } from './api.js'
+import { formatDuration } from './format.js'
 
 marked.setOptions({ breaks: true, gfm: true })
 
@@ -145,10 +146,11 @@ function ValidationBlock({ validation }) {
 // これ未満のスコアは「合格に達していない暫定案」を意味する。
 const PASS_THRESHOLD = 80
 
-function TankaCompleteBlock({ tanka, moras, plan, kigo, season, image, emotion, score }) {
+function TankaCompleteBlock({ tanka, moras, plan, kigo, season, image, emotion, score, durationSeconds }) {
   if (!tanka) return null
   const lines = String(tanka).split('\n')
   const unmet = typeof score === 'number' && score < PASS_THRESHOLD
+  const duration = formatDuration(durationSeconds)
   return (
     <div className={'tanka-complete' + (unmet ? ' unmet' : '')}>
       {unmet && (
@@ -172,6 +174,9 @@ function TankaCompleteBlock({ tanka, moras, plan, kigo, season, image, emotion, 
           <span className={'tanka-meta-item tanka-score' + (score >= PASS_THRESHOLD ? ' pass' : ' fail')}>
             評点: {score}/100
           </span>
+        )}
+        {duration && (
+          <span className="tanka-meta-item" title="生成所要時間 (Plan〜完成まで)">⏱ {duration}</span>
         )}
       </div>
       {(image || emotion) && (
@@ -252,6 +257,7 @@ function TankaMessage({ msg }) {
           image={msg.complete.image}
           emotion={msg.complete.emotion}
           score={msg.complete.score}
+          durationSeconds={msg.complete.durationSeconds}
         />
       )}
       {msg.error && <div className="error-banner">エラー: {msg.error}</div>}
@@ -728,6 +734,14 @@ function AppInner() {
                 : null,
             }))
             if (sameSession()) setTankaMode(true)
+          } else if (event.type === 'done') {
+            // 全体所要 (#27) は complete より後の done に載る (tasks._finalize が計測を持つため)。
+            // 完成ブロックへ後付けマージする。DB 再読込時は normalizeMessage が同じ値を復元する
+            if (typeof event.duration_seconds === 'number') {
+              updateLastMessage((m) =>
+                m.complete ? { ...m, complete: { ...m.complete, durationSeconds: event.duration_seconds } } : m,
+              )
+            }
           } else if (event.type === 'cancelled') {
             cancelledByUser = true
           } else if (event.type === 'error') {
