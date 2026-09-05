@@ -41,24 +41,51 @@ stream_completion = llm.stream_completion
 # ────────────────────────── ストリーミングのフェーズ実行 ──────────────────────────
 
 async def _run_llm_phase(phase: str, messages: list[dict], *, attempt: int | None = None,
-                         model: str | None = None) -> AsyncIterator[dict[str, Any]]:
+                         model: str | None = None,
+                         rescue_json: bool = True) -> AsyncIterator[dict[str, Any]]:
     """1 回の LLM 呼び出しを 1 フェーズとして実行する共通ジェネレータ。
     phase_start → chunk* → phase_end を yield する。最終テキストは phase_end.text に載る
     (呼び出し側は再 yield しつつ phase_end を覗いて結果を取得する)。
     model はパイプライン開始時のスナップショット (#15): 生成途中の切替の影響を受けない。
-    raw は thinking 込みの全文。永続化用 (tasks.py が拾い、SSE へは流さない)。"""
+    raw は thinking 込みの全文。永続化用 (tasks.py が拾い、SSE へは流さない)。
+
+    分離型 thinking モデル (#30): reasoning は llm 層で harmony マーカー形式に合流済み。
+    content が空のまま終わった場合に限り、reasoning 末尾からの JSON 救済パースを試みる
+    (rescue_json=False のフェーズ = 自由文の plan は対象外)。非分離モデル (llm-jp 等) は
+    meta ゲートにより一切影響を受けない。"""
     extra = {"attempt": attempt} if attempt is not None else {}
     yield {"type": "phase_start", "phase": phase, **extra}
     t0 = time.monotonic()  # フェーズ所要 (#27)。LM Studio 劣化やモデル比較の分析材料になる
     raw = ""
+    meta: dict[str, Any] = {}
     # completion 上限 (#22): 暴走思考の打ち切り。0/None なら無制限 (従来挙動)
     async for delta in llm.stream_completion(
-            messages, model=model, max_tokens=config.MAX_COMPLETION_TOKENS or None):
+            messages, model=model, max_tokens=config.MAX_COMPLETION_TOKENS or None, meta=meta):
         raw += delta
         yield {"type": "chunk", "phase": phase, "text": delta, **extra}
-    _, text = llm.split_harmony(raw)
+    thinking, text = llm.split_harmony(raw)
+    rescued = False
+    if meta.get("reasoning_separated"):
+        if thinking is None:
+            # マーカー未注入 = content が一度も来ていない (raw 全体が思考)。
+            # split_harmony は raw 全体を text にしてしまうが、従来の「content 空」の
+            # 意味論 (text="") を保存する — さもないと self_critique の
+            # 「text が空なら初稿を保持」ガードを思考ガベージが突破し、初稿を失う。
+            # 思考は raw として永続化・表示されるので診断性は失われない
+            candidate = llm.rescue_json_from_text(raw) if rescue_json else None
+            text = candidate if candidate is not None else ""
+            rescued = candidate is not None
+        elif not text.strip() and rescue_json:
+            # マーカー後の content が空白のみ → 完成 JSON が reasoning 側に残った可能性
+            candidate = llm.rescue_json_from_text(thinking or "")
+            if candidate is not None:
+                text = candidate
+                rescued = True
+        if rescued:
+            log.info("phase %s: rescued JSON from reasoning tail (%d chars)", phase, len(text))
     yield {"type": "phase_end", "phase": phase, "text": text, "raw": raw,
-           "duration_seconds": round(time.monotonic() - t0, 2), **extra}
+           "duration_seconds": round(time.monotonic() - t0, 2),
+           **({"rescued": True} if rescued else {}), **extra}
 
 
 # ────────────────────────── 副作用ヘルパー (イベントを出さない) ──────────────────────────
@@ -189,7 +216,9 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
         kigo_hint = manual_plan.get("kigo") or None
     else:
         plan = ""
-        async for ev in _run_llm_phase("plan", prompts.build_plan_messages(theme), model=model):
+        # plan は自由文なので JSON 救済の対象外 (#30)
+        async for ev in _run_llm_phase("plan", prompts.build_plan_messages(theme), model=model,
+                                       rescue_json=False):
             if ev["type"] == "phase_end":
                 plan = ev["text"]
             yield ev

@@ -175,6 +175,8 @@ def apply_event_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
             "raw": raw,
             # フェーズ所要秒 (#27)。手動 Plan (LLM なし) や旧イベントは None
             "duration_seconds": event.get("duration_seconds"),
+            # reasoning 末尾からの JSON 救済が発動したか (#30)。事後分析用
+            "rescued": bool(event.get("rescued")),
         })
     elif etype == "complete":
         state["plan"] = event.get("plan")

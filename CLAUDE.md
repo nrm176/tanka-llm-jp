@@ -95,7 +95,7 @@ open http://localhost:5178                    # フロント
 | `app/backend/main.py` | FastAPI ルートのみ。**ロジックは書かない**。リクエスト検証 → 適切な層に委譲のみ | エンドポイント追加時 |
 | `app/backend/tasks.py` | asyncio Task の lifecycle (起動/cancel/cleanup)、SSE への event emit、長期失敗の記録 | 新タスク種別追加時 |
 | `app/backend/tanka.py` | パイプラインの**オーケストレーション**のみ (Plan→Compose→Validate→Refine の流れ)。293 行 | パイプライン構造変更時 |
-| `app/backend/llm.py` | LM Studio 通信 (client/timeout/stream_completion/split_harmony/is_context_error) | LLM 層変更時 |
+| `app/backend/llm.py` | LM Studio 通信 (client/timeout/stream_completion/split_harmony/is_context_error/ReasoningMerger/rescue_json_from_text) | LLM 層変更時 |
 | `app/backend/prompts.py` | system プロンプト・few-shot・メッセージ組み立て (純関数) | プロンプト調整時 |
 | `app/backend/reading.py` | 読み・拍数 (kanji_to_hira/count_moras)。葉モジュール、依存なし | ほぼ触らない |
 | `app/backend/config.py` | TANKA_* env 設定の集約 (timeout/plateau/self-critique) | 設定追加時 |
@@ -245,10 +245,24 @@ validator / reading が fail-loud で起動を止める (silent degrade しな�
 - qwen3-swallow (thinking RL 変種) へ切替えたところ、短歌 compose プロンプトが thinking 暴走を誘発し、
   `</think>` 不到達のまま予算を使い切って **content が完全に空** → 全 attempt が schema_invalid になった
 - LM Studio は Qwen3 系の思考を `reasoning_content` に分離する (アプリは content のみ読む)。
-  この組では UI の思考表示も空になる。`/no_think` は RL 変種には効かない
+  【更新 2026-08】#30 で対応済み: llm 層が reasoning を harmony マーカー形式に合流させるため
+  思考は UI に表示される。ただし think 不到達の構造的不適合自体は変わらない
 - thinking 暴走の病理 (§6.14 の postmortem) は**モデル非依存** — 8B でも 30B でも再現する
 - **検証器が外部にある本パイプラインには non-thinking (Instruct) 変種を選ぶこと**。
   診断手順と推奨は `app/docs/model-compat-qwen3-swallow.md`
+
+### 6.17 モデルの「思考の流れ方」は LM Studio の更新で変わる (2026-08 に発覚)
+
+- 「llm-jp は harmony マーカー込みで content に流れる」という前提が **2026-07 頃の LM Studio 更新で
+  静かに崩れていた**: 実データで 6 月の phases raw はマーカー付き 6.8k 字、7 月以降は数百字 (答えのみ)。
+  つまり**既定モデルの思考表示・永続化 (#16) が 1 ヶ月以上黙って壊れていた** (答えは content に
+  来るためパイプラインは動き続け、誰も気づかなかった)
+- 対応 (#30): `llm.stream_completion` が `delta.reasoning_content` を読み、harmony マーカー形式へ
+  合流させる (`ReasoningMerger`)。下流 (split_harmony / フロント) は無変更で両タイプを扱える。
+  content が空のときのみ reasoning 末尾から JSON 救済 (`rescue_json_from_text`、分離ストリーム限定)
+- 教訓: **思考の流れ方はアプリではなく LM Studio 側の実装詳細**であり、更新で変わりうる。
+  「思考が表示されない」報告が出たら、まず LM Studio 直接プローブで content / reasoning_content の
+  配分を観測する (`app/docs/model-compat-qwen3-swallow.md` §6 のプローブ)
 
 ---
 

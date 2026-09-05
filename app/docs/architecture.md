@@ -393,7 +393,7 @@ SSE 配信側は `XREAD BLOCK 5000 STREAMS task:{tid}:events 0-0` で頭から�
 | `task_meta` | task_id, kind, session_id, status | 接続直後の初期情報 |
 | `phase_start` | phase ("plan"\|"compose"\|"self_critique"\|"refine"), attempt? | フェーズ開始 |
 | `chunk` | phase, attempt?, text | LLM 生 delta (フェーズタグ付き) |
-| `phase_end` | phase, attempt?, text, duration_seconds | フェーズ完了 (整形後本文 + 所要秒 #27) |
+| `phase_end` | phase, attempt?, text, duration_seconds, rescued? | フェーズ完了 (整形後本文 + 所要秒 #27)。rescued=true は reasoning 末尾からの JSON 救済が発動 (#30) |
 | `validation` | attempt, score, errors, warnings, violations, resolved | 検証結果 |
 | `plateau_reached` | best_score, history | 改善なしで打ち切り |
 | `max_refines_reached` | best_score | HARD_CAP=50 到達 (稀) |

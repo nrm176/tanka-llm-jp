@@ -90,11 +90,15 @@ llm-jp 8B で観測した病理 (postmortem 参照) は **モデル非依存の�
    「数分 × refine 回数の静かな浪費」が止まり、規定未達として可視化される。
    ※ このインシデントは #23 の価値の追加実証になった (発生時は未マージで上限なし)
 
-3. **`reasoning_content` 対応 (改善案・未実装)**
+3. **`reasoning_content` 対応 (【更新 2026-08】issue #30 で実装済み)**
    llm.py で `delta.reasoning_content` も読み、(a) UI の思考表示へ流す (qwen 系で思考が
    見えない問題の解消)、(b) content が空のとき reasoning 末尾から JSON を救済パースする。
    ※ (b) は本件のような「think が閉じない」ケースには効かない (JSON 自体が存在しない) が、
    think を閉じた後に content を出し損ねる系のモデルでは効く
+   実装: `llm.ReasoningMerger` が reasoning を harmony マーカー形式へ合流 (下流無変更で両対応)、
+   `llm.rescue_json_from_text` が末尾側から最後の valid JSON を探す (分離ストリーム限定ゲート)。
+   なお実装時の調査で、**LM Studio の 2026-07 頃の更新により llm-jp 自身も分離型になっていた**
+   ことが判明した (§3 の「llm-jp: harmony in content」は 6 月時点の観測。CLAUDE.md §6.17)
 
 4. **tokenizer 警告への対処 (このモデルを本採用する場合のみ)**
    修正済み tokenizer の変換 か GGUF 版へ乗り換える。`fix_mistral_regex=True` は
