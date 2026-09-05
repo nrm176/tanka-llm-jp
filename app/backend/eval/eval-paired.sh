@@ -143,7 +143,8 @@ i=0
 for line in "${THEME_LINES[@]}"; do
   i=$((i + 1))
   tid_label="${line%%$'\t'*}"; theme="${line#*$'\t'}"
-  printf "[%2d/%2d] %-8s %s\n" "$i" "$N" "$tid_label" "$(echo "$theme" | cut -c1-40)"
+  # cut -c はバイト単位で切るため日本語が壊れる (ログが不正 UTF-8 になり後処理が落ちた) → 文字単位で切る
+  printf "[%2d/%2d] %-8s %s\n" "$i" "$N" "$tid_label" "$(py "import sys; print(sys.argv[1][:40])" "$theme")"
   need_a=1; need_b=1
   grep -qxF "$theme" <<<"$DONE_A" && need_a=0
   grep -qxF "$theme" <<<"$DONE_B" && need_b=0
