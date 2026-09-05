@@ -94,7 +94,7 @@ open http://localhost:5178                    # フロント
 |---|---|---|
 | `app/backend/main.py` | FastAPI ルートのみ。**ロジックは書かない**。リクエスト検証 → 適切な層に委譲のみ | エンドポイント追加時 |
 | `app/backend/tasks.py` | asyncio Task の lifecycle (起動/cancel/cleanup)、SSE への event emit、長期失敗の記録 | 新タスク種別追加時 |
-| `app/backend/tanka.py` | パイプラインの**オーケストレーション**のみ (Plan→Compose→Validate→Refine の流れ)。293 行 | パイプライン構造変更時 |
+| `app/backend/tanka.py` | パイプラインの**オーケストレーション**のみ (Plan→Compose→Validate→Refine の流れ) | パイプライン構造変更時 |
 | `app/backend/llm.py` | LM Studio 通信 (client/timeout/stream_completion/split_harmony/is_context_error/ReasoningMerger/rescue_json_from_text) | LLM 層変更時 |
 | `app/backend/prompts.py` | system プロンプト・few-shot・メッセージ組み立て (純関数) | プロンプト調整時 |
 | `app/backend/reading.py` | 読み・拍数 (kanji_to_hira/count_moras)。葉モジュール、依存なし | ほぼ触らない |
@@ -304,11 +304,11 @@ validator / reading が fail-loud で起動を止める (silent degrade しな�
 ### 自動テスト (Phase 2 で導入)
 
 ```bash
-# validator の単体テスト (39 ケース、副作用ゼロなので LLM/DB 不要)
+# 単体テスト (164 ケース: validator / tasks reducer / db 変換 / llm 合流・救済 / thinking cap 等。副作用ゼロなので LLM/DB 不要)
 cd app/backend && uv run pytest -q
 ```
 
-`validator.py` は純関数集合なので pytest で網羅テスト済み。新ルール追加時は
+`validator.py` は純関数集合なので pytest で網羅テスト済み (他モジュールも純関数部分は `tests/` 配下で同様にカバー)。新ルール追加時は
 `tests/test_validator.py` にケースを足す。`test_every_rule_has_a_lesson` が
 「全ルールに LESSONS エントリがある」ことを保証しているので、ルール追加時は
 LESSONS への追加を忘れると test が落ちる (意図的な安全網)。

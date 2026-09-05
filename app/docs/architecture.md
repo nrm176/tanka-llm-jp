@@ -89,7 +89,7 @@ LM Studio は **Docker の外** でホストに立てる前提。`host.docker.in
 ┌──────────────────┐                                │
 │ validator.py     │                                │
 │ - Pydantic Tanka │                                │
-│ - 9 ルール       │                                │
+│ - 8 ルール       │                                │
 │ - スコアリング   │                                │
 │ - critique 整形  │                                │
 └────┬─────────────┘                                │
@@ -679,7 +679,7 @@ TANKA_SELF_CRITIQUE=0 docker compose up -d backend   # 設定を変えて backen
 指標: 初回合格率 / 総合合格率 / 平均 attempt 数 / 平均最終スコア / plateau 率 /
 スコア分布 / ルール別違反頻度。詳細は [`eval/README.md`](../backend/eval/README.md)。
 
-`validator` は副作用ゼロの純関数集合なので pytest で単体テスト可能 (`uv run pytest`、39 ケース)。
+`validator` は副作用ゼロの純関数集合なので pytest で単体テスト可能 (`uv run pytest`、164 ケース。validator 以外の純関数部分も含む)。
 
 ---
 
