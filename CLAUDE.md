@@ -283,6 +283,21 @@ validator / reading が fail-loud で起動を止める (silent degrade しな�
 - 教訓: **`mongo:8.0` のような floating minor tag でも、ホスト側 (Docker VM kernel) の更新で突然壊れる**。
   stack が起動しないときは、コードより先にインフラ層 (mongo ログ / kernel) を疑う
 
+### 6.19 モデルは `emotion` キーだけを綴り誤る (2026-09 に実測)
+
+- `failures` 全 625 件 (valid JSON 412 件) の横断で、キー名の誤記は **`emotion` にのみ集中**:
+  `emoton` 33 件 / `emotio n` 1 件 = **valid JSON 失敗の 8.3%**。`kigo` / `season` / `lines` / `image` は
+  誤記ゼロ。JSON としては valid なので #65 の末尾切れ救済では直らず、Pydantic だけが落ちていた
+  (エラーは `JSON スキーマ違反 (emotion): Field required`)
+- 対策 (#68): `validator.EMOTION_ALIASES` + Pydantic の `AliasChoices` で受け入れる。
+  **`model_dump()` は常に正規名 `emotion` を返す**ので下流 (DB / UI) は無変更
+- **この alias を「使われていない」と判断して消さないこと**。受け入れた事実は
+  `meta["key_typo"]` → validation イベント → DB に残るので、発生率は
+  `db.sessions` の `validations.key_typo` で確認できる (握り潰しではない)
+- 仮説: 5 キー中で最も長い英単語で、日本語特化モデルのサブワード境界 (`emo`+`tion` → `emo`+`ton`)
+  が崩れている。プロンプトにキー名を明記する対策も入れたが、**誤記そのものは書いていない** —
+  §6.4 の春アトラクターの教訓どおり、提示した例はモデルに写されるため
+
 ---
 
 ## 7. 設計上の重要な決定 (覆さないように)

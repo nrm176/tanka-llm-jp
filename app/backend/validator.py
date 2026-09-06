@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, Field, ValidationError
 
 import reading  # 読み・拍数の葉モジュール (tanka への逆依存を解消)
 
@@ -85,12 +85,24 @@ class TankaLine(BaseModel):
     reading: str = Field(..., min_length=1, description="ひらがな読み")
 
 
+# モデルが実際に出力する `emotion` キーの綴り誤り (#68)。
+# failures 全 625 件 (valid JSON 412 件) の横断調査で **emotion にのみ集中**しており、
+# emoton 33 件 / "emotio n" 1 件 = valid JSON 失敗の 8.3%。kigo / season / lines / image の
+# 4 キーには誤記が 1 件も無い。5 キー中で最も長い英単語であり、日本語特化モデルの
+# サブワード境界 (emo + tion → emo + ton) が崩れているという仮説と整合する。
+# **受け入れるが握り潰さない**: 発動は meta["key_typo"] で通知し、発生率を追えるようにする
+# (握り潰すと誤記が永続化し、後で気づけなくなる)。
+EMOTION_ALIASES = ("emotion", "emoton", "emotio n")
+EMOTION_TYPOS = frozenset(EMOTION_ALIASES[1:])
+
+
 class Tanka(BaseModel):
     kigo: str = Field(..., min_length=1, description="一首で用いる季語 (ちょうど 1 つ)")
     season: Season
     lines: list[TankaLine] = Field(..., min_length=5, max_length=5)
     image: str = Field(..., min_length=1, description="一文の情景")
-    emotion: str = Field(..., min_length=1, description="一文の心情")
+    emotion: str = Field(..., min_length=1, description="一文の心情",
+                         validation_alias=AliasChoices(*EMOTION_ALIASES))
 
 
 # ─── 季語辞書のロード ───
@@ -697,6 +709,13 @@ def parse_tanka_json(text: str, meta: dict | None = None) -> Tanka | tuple[None,
         if meta is not None:
             meta["json_repaired"] = True
         log.info("parse_tanka_json: repaired truncated JSON (%d chars)", len(text) - start)
+
+    # キー名の綴り誤り (#68) を検出して記録。alias で受け入れるが、発生率は計測できるようにする
+    typos = [k for k in data if k in EMOTION_TYPOS] if isinstance(data, dict) else []
+    if typos:
+        if meta is not None:
+            meta["key_typo"] = typos[0]
+        log.info("parse_tanka_json: accepted misspelled key %r as 'emotion'", typos[0])
 
     try:
         return Tanka.model_validate(data)
