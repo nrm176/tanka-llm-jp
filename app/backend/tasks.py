@@ -206,6 +206,8 @@ def apply_event_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
             "warnings": event.get("warnings", []),
             "violations": event.get("violations", []),
             "resolved": event.get("resolved", False),
+            # 末尾切れ JSON の救済が発動したか (#65)。本番での発動率を事後計測するため
+            "json_repaired": bool(event.get("json_repaired")),
         })
     elif etype == "max_refines_reached":
         state["max_refines_reached"] = True

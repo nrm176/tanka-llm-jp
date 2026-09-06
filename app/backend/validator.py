@@ -610,10 +610,65 @@ def evaluate(
 _FENCED_RE = re.compile(r"^```(?:json)?\s*\n?", re.MULTILINE)
 
 
-def parse_tanka_json(text: str) -> Tanka | tuple[None, str]:
+_NOT_FOUND_MSG = "JSON オブジェクトが見つかりません ({…} を出力してください)"
+
+
+def repair_truncated_json(fragment: str) -> dict | None:
+    """末尾が切れた JSON オブジェクトを、未閉じの括弧を補って復元する (#65)。
+
+    `fragment` は最初の `{` から **テキスト末尾まで** (`rfind("}")` で切らないこと)。
+    復元できたら dict、できなければ None を返す。
+
+    背景 (FINDINGS §5.6): 50 題 × 2 arm の実測で全生成の 12% が score 0 になり、その全てが
+    schema_invalid だった。正体は **モデルが最後の `}` を出力しない**こと。成功時は `..."\n}` で
+    終わるのに対し失敗時は `..."` で終わる。parse_tanka_json は「最初の `{` 〜 最後の `}`」で
+    切り出すため、閉じ括弧が無いと **lines 配列内の最後の要素の `}`** を拾って不均衡な文字列を
+    json.loads に渡し、「Expecting ',' delimiter」という中身が壊れているように見える
+    エラーになる (実体は末尾切れ)。この関数はその 1 パターンだけを機械的に直す。
+    """
+    stack: list[str] = []
+    in_str = esc = False
+    for ch in fragment:
+        if esc:
+            esc = False
+        elif ch == "\\":
+            esc = True
+        elif ch == '"':
+            in_str = not in_str
+        elif not in_str:
+            if ch in "{[":
+                stack.append(ch)
+            elif ch in "}]":
+                if not stack or stack[-1] != ("{" if ch == "}" else "["):
+                    return None  # 括弧が交差している = 末尾切れ以外の破損
+                stack.pop()
+    if not stack:
+        return None  # 閉じ切れている = 末尾切れではない (別の理由で parse に失敗している)
+
+    repaired = fragment + ('"' if in_str else "")
+    if not in_str:
+        repaired = repaired.rstrip()
+        # 末尾のカンマ (次の要素を書き始める前に切れた) を落とす。
+        # 末尾がコロンの場合は値が無いので復元不能 — 下の loads が弾く
+        if repaired.endswith(","):
+            repaired = repaired[:-1]
+    for ch in reversed(stack):
+        repaired += "}" if ch == "{" else "]"
+    try:
+        data = json.loads(repaired)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def parse_tanka_json(text: str, meta: dict | None = None) -> Tanka | tuple[None, str]:
     """LLM の生出力から JSON を取り出して Tanka に変換する。
     成功なら Tanka、失敗なら (None, error_message) を返す。
-    code fence や前後の散文に robust。"""
+    code fence や前後の散文に robust。
+
+    通常の抽出が失敗したときだけ、末尾切れの救済 (repair_truncated_json) を試す (#65)。
+    meta に dict を渡すと、救済が発動した場合に "json_repaired" が True で入る
+    (呼び出し側が validation イベントに載せて事後分析できるようにするため)。"""
     text = text.strip()
     # fenced code block 除去
     text = _FENCED_RE.sub("", text)
@@ -621,15 +676,28 @@ def parse_tanka_json(text: str) -> Tanka | tuple[None, str]:
 
     # 最初の { と最後の } を探す
     start = text.find("{")
+    if start == -1:
+        return None, _NOT_FOUND_MSG
     end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None, "JSON オブジェクトが見つかりません ({…} を出力してください)"
 
-    payload = text[start:end + 1]
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError as e:
-        return None, f"JSON パース失敗: {e.msg} (位置 {e.pos})"
+    data = None
+    err = _NOT_FOUND_MSG
+    if end > start:
+        try:
+            data = json.loads(text[start:end + 1])
+        except json.JSONDecodeError as e:
+            err = f"JSON パース失敗: {e.msg} (位置 {e.pos})"
+
+    if data is None:
+        # 末尾切れの救済 (#65)。現状 parse に失敗しているケースでのみ発動するため、
+        # 成功していたパスの挙動は変わらない
+        data = repair_truncated_json(text[start:])
+        if data is None:
+            return None, err
+        if meta is not None:
+            meta["json_repaired"] = True
+        log.info("parse_tanka_json: repaired truncated JSON (%d chars)", len(text) - start)
+
     try:
         return Tanka.model_validate(data)
     except ValidationError as e:
