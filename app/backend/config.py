@@ -44,7 +44,11 @@ PLATEAU_WINDOW = env_int("TANKA_PLATEAU_WINDOW", 3)   # 改善が止まったと
 HARD_CAP = env_int("TANKA_HARD_CAP", 50)              # 暴走防止の安全上限
 
 # ── 自己点検フェーズ (Phase 1 B4) ──
-SELF_CRITIQUE_ENABLED = env_bool("TANKA_SELF_CRITIQUE", True)
+# 既定 OFF (#66, 2026-09)。paired A/B ×2 回 (FINDINGS §5.6 / §5.7) で品質差は測定限界以下
+# (run 2: Δ +0.9、2SE 2.4、95% 区間 [−1.5, +3.4]) なのに、所要時間は +43% (+73 s/生成) で確実。
+# 検証器を外部に持つ設計ではモデル内の自己点検に払う根拠がない (design-principle-verifier-in-the-loop.md)。
+# env=1 または per-request `self_critique: true` で ON にできる。
+SELF_CRITIQUE_ENABLED = env_bool("TANKA_SELF_CRITIQUE", False)
 
 # ── 動的 few-shot (春アトラクター対策) ──
 # True: plan の季に一致する few-shot 1 ペアのみを compose に見せ、他季 (特に春の散る桜) の
