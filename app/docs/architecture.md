@@ -176,7 +176,7 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     subgraph transport["リクエスト / 転送層（HTTP と LLM を非同期分離）"]
-        U["POST /api/tanka<br/>(theme, session_id)"]
+        U["POST /api/tanka<br/>(theme, session_id?)<br/>session_id 省略時は自動作成（#61）"]
         EM["実効モデル解決<br/>session.model &gt; グローバル現在値（#20）"]
         TASK["task_id を即返却<br/>+ asyncio 背景タスク起動"]
         SSE["イベント → Redis Stream → SSE<br/>GET /api/tasks/{id}/stream"]
@@ -306,8 +306,9 @@ erDiagram
         string   session_id
         string   kind            "chat | tanka"
         string   status          "running | completed | failed | cancelled"
-        object   input           "{mode} or {theme, max_refines, manual_plan?, self_critique?}"
+        object   input           "{mode, model} or {theme, max_refines, model, manual_plan?, self_critique?}"
         string   error
+        object   result          "終了時のみ (#61): tanka は complete 相当の軽量 dict, chat は {thinking, answer}"
         datetime created_at
         datetime updated_at
     }
@@ -405,6 +406,30 @@ SSE 配信側は `XREAD BLOCK 5000 STREAMS task:{tid}:events 0-0` で頭から�
 | `done` | status, duration_seconds? | 終了マーカー + 全体所要秒 (#27)。complete より後に流れるため、ライブ UI は done で完成ブロックに所要を後付けする |
 
 フロント (`api.js` の `streamTask`) は POST 不可制約を回避するため、`EventSource` ではなく `fetch + ReadableStream` で手動 SSE パース。
+
+### API 単体利用: `POST /api/tanka` → `GET /api/tasks/{tid}` (ポーリング、#61)
+
+SSE を購読しない利用者 (スクリプト / 外部システム) 向けの経路。`POST /api/tanka` は `session_id` を
+省略できる (セッションを自動作成し応答の `session_id` で返す。auto-title でお題がタイトルになる)。
+`GET /api/tasks/{tid}` はタスク文書をそのまま返す:
+
+```json
+{"id": "…", "kind": "tanka", "session_id": "…",
+ "status": "running | completed | failed | cancelled",
+ "input": {"theme": "…", "max_refines": null, "model": "…", "manual_plan": null},
+ "error": null,
+ "result": {"theme": "…", "tanka": "5 句を改行区切り", "plan": "…", "moras": [5,7,5,7,7],
+            "kigo": "…", "season": "…", "image": "…", "emotion": "…",
+            "score": 97, "model": "…", "attempts": 2,
+            "plateau_reached": true, "max_refines_reached": false, "duration_seconds": 156.7}}
+```
+
+- `result` は終了時に `tasks._finalize` が `db.update_task(result=...)` でタスク文書へ保存する。
+  tanka は `tasks.tanka_result_from_state` (純関数) が `complete` イベント / 短歌一覧レコードと同じ語彙に整形、
+  chat は `{thinking, answer}`。実行中・失敗・#61 以前の文書では `null`
+- セッションメッセージ側のフル永続化 (phases の thinking raw / validations 詳細) とは別物。タスク文書は軽量に保つ
+- **同期 POST は意図的に作らない**。1 生成が 2〜4 分かかるため、HTTP と LLM の寿命分離 (§8) を維持し、
+  利用者は「POST → task_id → GET でポーリング」の 2 ステップで結果を得る
 
 ---
 

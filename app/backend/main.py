@@ -10,10 +10,12 @@
 - GET    /api/sessions/{sid}/active-task   進行中タスクがあれば {task_id, kind} を返す
 
 - POST   /api/chat                 チャットタスク作成 → {task_id} を即返す (LLM はバックグラウンド)
-- POST   /api/tanka                短歌タスク作成 → {task_id} (manual_plan 指定で手動構想モード)
+- POST   /api/tanka                短歌タスク作成 → {task_id, session_id} (manual_plan 指定で手動構想モード。
+                                   session_id 省略時はセッションを自動作成 #61)
 - GET    /api/tanka/records        全セッション横断の短歌一覧 (新しい順)
 - GET    /api/kigo                 手動構想モード用: 季節 → 季語リスト
 - POST   /api/plan/extract         手動構想モード用: 自由文から季節・季語を辞書抽出 (プリフィル #43)
+- GET    /api/tasks/{tid}          タスクの status と完了時の result (SSE 不要のポーリング経路 #61)
 - GET    /api/tasks/{tid}/stream   SSE: タスクのイベントストリーム (replay+ライブ)
 - POST   /api/tasks/{tid}/cancel   実行中タスクのキャンセル
 
@@ -135,7 +137,8 @@ class PlanExtractRequest(BaseModel):
 
 
 class TankaRequest(BaseModel):
-    session_id: str
+    # None なら新規セッションを自動作成し、応答の session_id で返す (API 単体利用 #61)
+    session_id: str | None = None
     theme: str = Field(..., min_length=1)
     # None なら無制限 (plateau 検知のみ。最後の安全網は HARD_CAP=50)。
     # 数値を指定すると refine 回数の上限になる (旧来の固定回数挙動)。
@@ -333,23 +336,29 @@ async def chat(req: ChatRequest) -> dict:
 
 @app.post("/api/tanka")
 async def tanka_endpoint(req: TankaRequest) -> dict:
-    sess = db.get_session(req.session_id)
-    if not sess:
-        raise HTTPException(status_code=404, detail="session not found")
-    if db.find_active_task(req.session_id):
+    if req.session_id is None:
+        # API 単体利用 (#61): セッション未指定なら作って応答で返す。タイトルは append_message の
+        # auto-title (既定タイトルのときだけ効く §6.12) でお題 "tanka:<theme>" になる
+        sess = db.create_session()
+    else:
+        sess = db.get_session(req.session_id)
+        if not sess:
+            raise HTTPException(status_code=404, detail="session not found")
+    sid = sess["id"]
+    if db.find_active_task(sid):
         raise HTTPException(status_code=409, detail="another task is already running for this session")
 
     # セッション実効モデル (#20) をタスク作成時に解決 (session.model > グローバル現在値)
     model = llm.effective_model(sess)
     manual_plan = req.manual_plan.model_dump() if req.manual_plan else None
-    db.append_message(req.session_id, {"kind": "user", "content": f"tanka:{req.theme}"})
-    task = db.create_task(req.session_id, kind="tanka", input_data={
+    db.append_message(sid, {"kind": "user", "content": f"tanka:{req.theme}"})
+    task = db.create_task(sid, kind="tanka", input_data={
         "theme": req.theme, "max_refines": req.max_refines, "model": model,
         "manual_plan": manual_plan, "self_critique": req.self_critique})
-    tasks.start_tanka(task["id"], req.session_id, req.theme, req.max_refines,
+    tasks.start_tanka(task["id"], sid, req.theme, req.max_refines,
                       model=model, manual_plan=manual_plan, self_critique=req.self_critique)
 
-    return {"task_id": task["id"], "session_id": req.session_id, "kind": "tanka"}
+    return {"task_id": task["id"], "session_id": sid, "kind": "tanka"}
 
 
 @app.get("/api/kigo")
@@ -368,6 +377,20 @@ async def extract_plan(req: PlanExtractRequest) -> dict:
     LLM は使わない (機械的照合のみ)。ロジックは validator.extract_plan_prefill に委譲。"""
     import validator  # tanka.py と同様の遅延 import (main の常駐依存を増やさない)
     return validator.extract_plan_prefill(req.text)
+
+
+# ─── Task status / result (API 単体利用 #61) ───
+
+@app.get("/api/tasks/{tid}")
+async def get_task_endpoint(tid: str) -> dict:
+    """タスク文書 + 完了時の result。SSE を購読せず「POST → ポーリング」で結果を得る経路。
+    result は終了時に tasks._finalize が保存する (tanka: complete イベント相当、chat: thinking/answer)。
+    実行中・失敗・#61 以前の旧文書には result キーが無いので null に正規化して返す。"""
+    task = db.get_task(tid)
+    if not task:
+        raise HTTPException(status_code=404, detail="task not found")
+    task.setdefault("result", None)
+    return task
 
 
 # ─── Task streaming (SSE) ───
