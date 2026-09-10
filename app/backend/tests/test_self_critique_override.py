@@ -64,3 +64,17 @@ def test_no_override_follows_config(monkeypatch):
     assert _phases(monkeypatch) == ["plan", "compose", "self_critique"]
     monkeypatch.setattr(config, "SELF_CRITIQUE_ENABLED", False)
     assert _phases(monkeypatch) == ["plan", "compose"]
+
+
+def test_default_is_off():
+    # 既定 OFF (#66, FINDINGS §5.7): paired A/B ×2 で品質差は測定限界以下 (Δ +0.9, 2SE 2.4) なのに
+    # 所要 +43%。測定なしに True に戻さないための固定 (test_default_cap_is_enabled と同じ発想)
+    import importlib, os
+    saved = os.environ.pop("TANKA_SELF_CRITIQUE", None)
+    try:
+        importlib.reload(config)
+        assert config.SELF_CRITIQUE_ENABLED is False
+    finally:
+        if saved is not None:
+            os.environ["TANKA_SELF_CRITIQUE"] = saved
+        importlib.reload(config)

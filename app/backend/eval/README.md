@@ -82,7 +82,7 @@ backend コンテナの環境変数でパイプライン挙動を変えられる
 
 | 環境変数 | デフォルト | 効果 |
 |---|---|---|
-| `TANKA_SELF_CRITIQUE` | `1` | 自己点検フェーズの ON/OFF (Phase 1 B4) |
+| `TANKA_SELF_CRITIQUE` | `0` | 自己点検フェーズの ON/OFF (Phase 1 B4)。2026-09 に既定 OFF (#66、FINDINGS §5.7) |
 | `TANKA_PASS_THRESHOLD` | `80` | 合格スコアのしきい値 |
 | `TANKA_W_<RULE>` | 各ルール既定 | ルール別の減点重み (例: `TANKA_W_KIGO_UNIQUE=20`) |
 
@@ -93,15 +93,16 @@ backend コンテナの環境変数でパイプライン挙動を変えられる
 各コンポーネントの寄与を測る:
 
 ```bash
-# 自己点検あり (baseline)
+# 自己点検なし (既定 = baseline)
+./eval.sh baseline
+
+# 自己点検あり
+cd ../.. && TANKA_SELF_CRITIQUE=1 docker compose up -d backend && cd backend/eval
 ./eval.sh with-self-critique
 
-# 自己点検なし
-cd ../.. && TANKA_SELF_CRITIQUE=0 docker compose up -d backend && cd backend/eval
-./eval.sh without-self-critique
-
-./compare.sh with-self-critique without-self-critique
+./compare.sh baseline with-self-critique
 # → 自己点検が avg_final_score を何点上げているかが分かる
+# (※ この blocked A/B は LM Studio 劣化に弱い。厳密な判定は eval-paired.sh を使う — FINDINGS §5.5/§5.7)
 ```
 
 ---
