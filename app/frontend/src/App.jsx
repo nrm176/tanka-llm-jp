@@ -7,6 +7,7 @@ import {
   checkHealth,
   clearFailures,
   createChatTask,
+  createPlanDraft,
   createSession,
   createTankaTask,
   deleteSession,
@@ -14,6 +15,7 @@ import {
   getActiveTask,
   getKigo,
   getSession,
+  getTask,
   listFailures,
   listModels,
   listSessions,
@@ -591,6 +593,66 @@ function SessionIdChip({ id }) {
   )
 }
 
+// ───── 構想の下書きレビュー (#63 Phase 2) ─────
+// POST /api/plan の result を人がレビューするブロック。候補を選ぶとフォームの情景に入り、
+// そこで加筆できる。警告 (季重なり等) は compose が写すと critical 違反になるものを先に見せる。
+// 背景は人が読むための素材で本文には入れない (Phase 1 の設計決定)。
+
+const DRAFT_WARNING_TEXT = {
+  kigo_overridden: (w) => `LLM は季語を「${w.kigo}」に変えていましたが、指定した「${w.fixed_kigo}」に戻しました。`,
+  season_corrected: (w) => `季語「${w.kigo}」の季節は辞書に従い「${w.from}」→「${w.to}」に直しました。`,
+  kigo_not_in_dictionary: (w) => `季語「${w.kigo}」は季語辞書にありません (生成すると減点されます)。`,
+}
+
+function PlanDraftReview({ result, selected, onSelect, disabled }) {
+  const candidates = result?.image_candidates || []
+  if (!candidates.length) return null
+  const warnings = result.warnings || []
+  const globalNotes = warnings
+    .filter((w) => w.type !== 'other_kigo' && DRAFT_WARNING_TEXT[w.type])
+    .map((w) => DRAFT_WARNING_TEXT[w.type](w))
+  const otherKigo = (i) => warnings.filter((w) => w.type === 'other_kigo' && w.candidate === i)
+  return (
+    <div className="mp-draft-review">
+      <div className="mp-draft-head">
+        <span className="mp-cand-label">LLM の下書き（季語「{result.kigo}」・{result.season}）</span>
+        <span className="mp-draft-meta">候補を選ぶと下の情景に入ります。選んだ後は自由に書き直せます</span>
+      </div>
+      <ul className="mp-draft-cands">
+        {candidates.map((text, i) => {
+          const ok = otherKigo(i)
+          return (
+            <li key={i}>
+              <button
+                type="button"
+                className={`mp-draft-cand${selected === i ? ' selected' : ''}`}
+                onClick={() => onSelect(i)}
+                disabled={disabled}
+                aria-pressed={selected === i}
+              >
+                <span className="mp-draft-idx">{i + 1}</span>
+                <span className="mp-draft-text">{text}</span>
+              </button>
+              {ok.length > 0 && (
+                <span className="mp-draft-warn" title="宣言した季語以外の季語が含まれています。本文に写ると季重なり (critical) で減点されます">
+                  ⚠ 季重なり: {ok.map((w) => `${w.kigo}（${w.season}）`).join('・')}
+                </span>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+      {globalNotes.map((t, i) => <div key={i} className="mp-extract-note">{t}</div>)}
+      {result.background && (
+        <details className="mp-draft-bg">
+          <summary>背景を見る（LLM が想定した場面。本文には入れない）</summary>
+          <p>{result.background}</p>
+        </details>
+      )}
+    </div>
+  )
+}
+
 // ───── メインアプリ ─────
 
 function AppInner() {
@@ -609,6 +671,12 @@ function AppInner() {
   const [mpCandidates, setMpCandidates] = useState([])
   const [mpExtracting, setMpExtracting] = useState(false)
   const [mpExtractNote, setMpExtractNote] = useState('')
+  // LLM による構想の下書き (#63 Phase 2)。result は POST /api/plan の result
+  // ({kigo, season, image_candidates, emotion, background, warnings, ...})、selected は採用中の候補 index
+  const [mpDrafting, setMpDrafting] = useState(false)
+  const [mpDraftResult, setMpDraftResult] = useState(null)
+  const [mpDraftSelected, setMpDraftSelected] = useState(0)
+  const draftTaskRef = useRef(null) // ポーリング中の plan タスク id (中止・二重起動ガード)
   const [health, setHealth] = useState({ status: 'checking' })
   const [error, setError] = useState(null)
   const [showFailures, setShowFailures] = useState(false)
@@ -822,9 +890,11 @@ function AppInner() {
       const last = (sess.messages || []).slice().reverse().find((m) => m.kind === 'assistant' || m.kind === 'tanka')
       setTankaMode(last?.kind === 'tanka')
 
-      // アクティブなタスクがあれば再接続して live updates を表示
+      // アクティブなタスクがあれば再接続して live updates を表示。
+      // plan (構想の下書き #63) は会話に載らない中間物なので購読しない — 手動構想パネルの
+      // ポーリングが (走っていれば) 結果を拾う。ここで assistant 扱いすると chat 表示に化ける
       const active = await getActiveTask(id)
-      if (active.task_id) {
+      if (active.task_id && active.kind !== 'plan') {
         // タスクの kind に応じた placeholder を末尾に挿入してから stream へ
         if (active.kind === 'tanka') {
           setMessages((prev) => [
@@ -960,6 +1030,68 @@ function AppInner() {
       setMpExtracting(false)
     }
   }, [mpDraft])
+
+  // 下書き結果の候補 i をフォームへ流し込む (#63)。季語/季節は backend が辞書で確定した値、
+  // 情景/心情は編集可能な input に入るので、人はそのまま加筆できる (200 字は backend の上限)
+  const applyDraftCandidate = useCallback((r, i) => {
+    const image = (r.image_candidates || [])[i] || ''
+    setMpDraftSelected(i)
+    setMp((p) => ({
+      ...p,
+      season: r.season || p.season,
+      kigo: r.kigo || p.kigo,
+      image: image.slice(0, 200),
+      emotion: (r.emotion || '').slice(0, 200),
+    }))
+  }, [])
+
+  // LLM に構想を下書きさせる (#63 Phase 2): お題 (input) + 選択中の季語で POST /api/plan →
+  // GET /api/tasks/{tid} を 1.5 秒ごとにポーリング → 完了で候補 0 をフォームへ。
+  // SSE は使わない (結果は軽量で一発取得できる)。plan は ~10〜35 秒、compose (80〜100 秒×attempt)
+  // より前の安い地点で人が直すのがこのフローの狙い
+  const draftPlan = useCallback(async () => {
+    const theme = input.trim()
+    if (!theme || streaming || mpDrafting || !activeId) return
+    setMpDrafting(true)
+    setError(null)
+    setMpDraftResult(null)
+    let taskId = null
+    try {
+      const created = await createPlanDraft({
+        sessionId: activeId, theme, kigo: mp.kigo || null, season: mp.season, nCandidates: 3,
+      })
+      taskId = created.task_id
+      draftTaskRef.current = taskId
+      let task
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1500))
+        if (draftTaskRef.current !== taskId) return // 中止された
+        task = await getTask(taskId)
+        if (task.status !== 'running') break
+      }
+      if (task.status !== 'completed' || !task.result) {
+        setError(`構想の下書きに失敗しました: ${task.error || task.status}`)
+        return
+      }
+      setMpDraftResult(task.result)
+      setMpCandidates([]) // 辞書プリフィル (#43) の候補チップは下書き候補と紛れるので畳む
+      setMpExtractNote('')
+      applyDraftCandidate(task.result, 0)
+    } catch (e) {
+      setError(`構想の下書きに失敗: ${e.message}`)
+    } finally {
+      if (draftTaskRef.current === taskId) draftTaskRef.current = null
+      setMpDrafting(false)
+    }
+  }, [input, streaming, mpDrafting, activeId, mp.kigo, mp.season, applyDraftCandidate])
+
+  const cancelDraft = useCallback(async () => {
+    const tid = draftTaskRef.current
+    draftTaskRef.current = null // ポーリングループを抜けさせる
+    if (tid) {
+      try { await cancelTask(tid) } catch (e) { console.warn('cancel draft failed:', e) }
+    }
+  }, [])
 
   // ── 短歌パイプライン (タスク作成 → ストリーム購読) ──
   // manualPlan を渡すと LLM Plan フェーズをスキップする (手動構想モード)。
@@ -1241,12 +1373,34 @@ function AppInner() {
                   type="button"
                   className="mp-extract-btn"
                   onClick={fillFromDraft}
-                  disabled={!mpDraft.trim() || !!streaming || mpExtracting}
+                  disabled={!mpDraft.trim() || !!streaming || mpExtracting || mpDrafting}
                 >
                   {mpExtracting ? '抽出中…' : '構想から埋める'}
                 </button>
+                {/* LLM 下書き (#63): お題 (下の入力欄) + 選択中の季語で情景候補・心情を出させる */}
+                <button
+                  type="button"
+                  className="mp-extract-btn mp-llm-btn"
+                  onClick={draftPlan}
+                  disabled={!input.trim() || !!streaming || mpExtracting || mpDrafting}
+                  title="お題と季語から、LLM に情景の候補と心情を下書きさせる (~10〜30 秒)"
+                >
+                  {mpDrafting ? 'LLM が下書き中…' : 'LLM で下書き'}
+                </button>
+                {mpDrafting && (
+                  <button type="button" className="mp-link-btn" onClick={cancelDraft}>中止</button>
+                )}
                 {mpExtractNote && <span className="mp-extract-note">{mpExtractNote}</span>}
+                {!mpDrafting && !input.trim() && !mpExtractNote && (
+                  <span className="mp-extract-hint">「LLM で下書き」は下の入力欄にお題を入れると押せます</span>
+                )}
               </div>
+              {mpDraftResult && <PlanDraftReview
+                result={mpDraftResult}
+                selected={mpDraftSelected}
+                onSelect={(i) => applyDraftCandidate(mpDraftResult, i)}
+                disabled={!!streaming}
+              />}
               {mpCandidates.length > 1 && (
                 <div className="mp-candidates">
                   <span className="mp-cand-label">季語候補:</span>
@@ -1323,8 +1477,8 @@ function AppInner() {
               <button
                 className="send-btn"
                 onClick={send}
-                disabled={!input.trim() || !activeId}
-                title="送信 (Cmd/Ctrl + Enter)"
+                disabled={!input.trim() || !activeId || mpDrafting}
+                title={mpDrafting ? '構想の下書き中は送信できません' : '送信 (Cmd/Ctrl + Enter)'}
               >
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="8" y1="13" x2="8" y2="3" />
@@ -1336,7 +1490,7 @@ function AppInner() {
           </div>
           <div className="footer-hint">
             {manualMode
-              ? '手動構想モード: お題＋情景・心情・季語・季節から短歌を生成（LLM の構想フェーズを省略）。'
+              ? '手動構想モード: お題＋情景・心情・季語・季節から短歌を生成（LLM の構想フェーズを省略）。「LLM で下書き」で情景候補を出してから直すこともできます。'
               : '送信ボタンをクリック、または '}
             {!manualMode && <><kbd>⌘ / Ctrl</kbd> + <kbd>Enter</kbd> で送信。Enter は改行。</>}
           </div>

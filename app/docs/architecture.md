@@ -456,7 +456,14 @@ result (タスク文書):
   (eval の比較可能性を守る)。`background` は人が読む素材で compose には渡さない (長文注入は context を圧迫し、
   8B は一首に全部詰め込もうとする)
 - 想定フロー: `POST /api/plan` → `GET /api/tasks/{tid}` → 人が候補を選び加筆 → `POST /api/tanka {manual_plan}`。
-  Plan 単体は実測 ~9 秒 (compose / refine は各 80〜100 秒) なので、人が直す地点として安い。UI 化は #63 Phase 2
+  Plan 単体は実測 ~9 秒 (compose / refine は各 80〜100 秒) なので、人が直す地点として安い
+- **UI (#63 Phase 2)**: 手動構想モードの「LLM で下書き」ボタン (`App.jsx` の `draftPlan`) がこのフローを実装する。
+  お題 (入力欄) + 選択中の季語で `POST /api/plan` → `GET /api/tasks/{tid}` を 1.5 秒ごとにポーリング (SSE は使わない) →
+  `PlanDraftReview` が候補を表示し、選んだ候補と心情をフォームの情景・心情に流し込む (そこで加筆可)。
+  候補ごとの `other_kigo` 警告は「⚠ 季重なり: 花（春）」として表示、`kigo_overridden` / `season_corrected` /
+  `kigo_not_in_dictionary` は注記行に出す。背景は折り畳み (本文には入れない)。「中止」は `POST /api/tasks/{tid}/cancel`。
+  plan タスクは会話に載らない中間物なので、`loadSession` の再接続は `kind === 'plan'` を購読しない
+  (assistant 扱いすると chat 表示に化ける)。下書き中は送信ボタンを無効化 (同一セッションの 409 を踏まない)
 
 ---
 
