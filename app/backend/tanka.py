@@ -18,6 +18,7 @@ Plan → Compose(JSON) → (self-critique) → Validate → Refine* のループ
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -86,6 +87,38 @@ async def _run_llm_phase(phase: str, messages: list[dict], *, attempt: int | Non
     yield {"type": "phase_end", "phase": phase, "text": text, "raw": raw,
            "duration_seconds": round(time.monotonic() - t0, 2),
            **({"rescued": True} if rescued else {}), **extra}
+
+
+# plan / compose の LLM エラー時に再試行するまでの待ち秒 (LM Studio の一過性エラーは負荷起因が多い)
+PHASE_RETRY_DELAY = 2.0
+
+
+async def _run_llm_phase_with_retry(phase: str, messages: list[dict], *, retries: int = 1,
+                                    **kw) -> AsyncIterator[dict[str, Any]]:
+    """plan / compose 用: LLM 呼び出しの例外を **1 回だけ再試行**する (#67)。
+
+    refine / self_critique は best-so-far や初稿へのフォールバックがあるが、plan / compose には
+    無く、LM Studio の一過性エラー (実測: compose 中の 500 "peg-native format"、98 生成中 1 件) で
+    タスク全体が失敗していた。temperature 0.3 のサンプリングなので同じプロンプトでも再試行で
+    別の出力になり、一過性エラーはほぼ通る。
+
+    - context 超過は再試行しても同じ結果なので即 raise (`llm.is_context_error`)
+    - 再試行前に `phase_retry` イベントを yield する (フロントは失敗した途中フェーズを畳み、
+      reducer は回数を永続化する)。再試行も失敗したら raise → tasks.py が error イベントで fail-clean
+    - 失敗した試行の chunk は既に yield 済みだが、呼び出し側は phase_end でしか状態を更新しないので無害
+    """
+    for i in range(retries + 1):
+        try:
+            async for ev in _run_llm_phase(phase, messages, **kw):
+                yield ev
+            return
+        except Exception as e:
+            if i >= retries or llm.is_context_error(e):
+                raise
+            log.warning("phase %s failed (%s); retrying in %.0fs (%d/%d)",
+                        phase, e, PHASE_RETRY_DELAY, i + 1, retries)
+            yield {"type": "phase_retry", "phase": phase, "message": str(e), "retry": i + 1}
+            await asyncio.sleep(PHASE_RETRY_DELAY)
 
 
 # ────────────────────────── 副作用ヘルパー (イベントを出さない) ──────────────────────────
@@ -280,8 +313,8 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
     else:
         plan = ""
         # plan は自由文なので JSON 救済の対象外 (#30)
-        async for ev in _run_llm_phase("plan", prompts.build_plan_messages(theme), model=model,
-                                       rescue_json=False):
+        async for ev in _run_llm_phase_with_retry("plan", prompts.build_plan_messages(theme),
+                                                  model=model, rescue_json=False):
             if ev["type"] == "phase_end":
                 plan = ev["text"]
             yield ev
@@ -316,7 +349,7 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
     # ── Step 2: Compose ──
     compose_messages = compose_base()
     composition = ""
-    async for ev in _run_llm_phase("compose", compose_messages, model=model):
+    async for ev in _run_llm_phase_with_retry("compose", compose_messages, model=model):
         if ev["type"] == "phase_end":
             composition = ev["text"]
         yield ev

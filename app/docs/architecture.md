@@ -395,6 +395,7 @@ SSE 配信側は `XREAD BLOCK 5000 STREAMS task:{tid}:events 0-0` で頭から�
 | `phase_start` | phase ("plan"\|"compose"\|"self_critique"\|"refine"), attempt? | フェーズ開始 |
 | `chunk` | phase, attempt?, text | LLM 生 delta (フェーズタグ付き) |
 | `phase_end` | phase, attempt?, text, duration_seconds, rescued? | フェーズ完了 (整形後本文 + 所要秒 #27)。rescued=true は reasoning 末尾からの JSON 救済が発動 (#30) |
+| `phase_retry` | phase, message, retry | plan / compose の LLM エラーからの再試行 (#67)。直前の phase_start 以降のイベントは無効 (フロントはブロックを畳む)。続けて新しい phase_start が流れる。再試行も失敗すると `error` |
 | `lessons` | entries[] ({theme, kigo, season, score, rule, lesson, ts}) | compose に注入した長期失敗記憶の教訓 (Plan 後に 1 回、注入なしなら流れない)。プロンプトと同一ソース (`validator.long_term_failure_entries`) から生成 |
 | `rag` | examples[] ({text, author, source, kigo, season}) | compose に注入した古典作例 (Plan 後に 1 回、retrieval 0 件なら流れない) |
 | `validation` | attempt, score, errors, warnings, violations, resolved | 検証結果 |

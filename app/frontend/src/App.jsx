@@ -739,6 +739,10 @@ function AppInner() {
             updateLastMessage((m) => ({ ...m, maxRefinesReached: true, bestScore: event.best_score }))
           } else if (event.type === 'plateau_reached') {
             updateLastMessage((m) => ({ ...m, plateauReached: true, bestScore: event.best_score, scoreHistory: event.history }))
+          } else if (event.type === 'phase_retry') {
+            // plan/compose の LLM エラーからの再試行 (#67)。失敗した途中フェーズのブロックを畳み、
+            // 直後の phase_start で新しいブロックが積まれる (永続化側は成功分しか持たないので整合する)
+            updateLastMessage((m) => ({ ...m, phases: (m.phases || []).slice(0, -1) }))
           } else if (event.type === 'llm_error') {
             updateLastMessage((m) => ({ ...m, llmError: event.message, llmErrorRecovered: event.recovered }))
           } else if (event.type === 'complete') {
