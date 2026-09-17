@@ -74,6 +74,7 @@ echo "started; log: results/paired-sc.log"
 2. `|mean diff| > 2SE` → 有意。`mean diff > 0` なら ON 採用、`< 0` なら OFF 推奨 (ON は有害)
 3. `|mean diff| <= 2SE` → **判定不能**。「n=50 の paired でもノイズ内 = 効果は小さい」自体が知見。
    コスト側 (mean duration の差、通常 +60〜120 s/生成) を踏まえて OFF 既定化を検討する
+   (**run 2 で確定**: 判定不能 + コスト確実 → OFF。FINDINGS §5.7。既定は 2026-09 に OFF になった)
 4. 前半/後半チェック (劣化の対称性): 各 arm の 1〜25 題と 26〜50 題の平均を比較
 
 ```bash

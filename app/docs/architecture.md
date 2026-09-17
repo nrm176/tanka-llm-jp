@@ -669,7 +669,7 @@ docker compose down -v          # ボリュームも削除 (DB データが消�
 #### Pipeline 制御 (Phase 1 A5 で追加)
 | 変数 | デフォルト | 用途 |
 |---|---|---|
-| `TANKA_SELF_CRITIQUE` | `1` (true) | Compose 後の自己点検フェーズ。Phase 2 A/B 実験で off にして効果測定 |
+| `TANKA_SELF_CRITIQUE` | `0` (false) | Compose 後の自己点検フェーズ。**2026-09 に既定 OFF** (#66): paired A/B ×2 で品質差は測定限界以下、所要 +43% (FINDINGS §5.7)。per-request `self_critique: true` でも ON にできる |
 | `TANKA_PLATEAU_WINDOW` | `3` | plateau 検知の窓幅 |
 | `TANKA_HARD_CAP` | `50` | refine 回数の安全上限 |
 | `TANKA_PASS_THRESHOLD` | `80` | 合格スコア閾値 |

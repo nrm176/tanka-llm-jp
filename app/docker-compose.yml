@@ -60,7 +60,7 @@ services:
       # eval/ablation 用の TANKA_* 上書き口 (未指定なら各モジュールの既定値が効く)。
       # 例: TANKA_DYNAMIC_FEWSHOT=0 docker compose up -d backend && ./eval.sh baseline
       TANKA_DYNAMIC_FEWSHOT: ${TANKA_DYNAMIC_FEWSHOT:-1}
-      TANKA_SELF_CRITIQUE: ${TANKA_SELF_CRITIQUE:-1}
+      TANKA_SELF_CRITIQUE: ${TANKA_SELF_CRITIQUE:-0}   # 既定 OFF (#66、FINDINGS §5.7)
       TANKA_RAG: ${TANKA_RAG:-1}
       TANKA_HARD_CAP: ${TANKA_HARD_CAP:-50}
       TANKA_PLATEAU_WINDOW: ${TANKA_PLATEAU_WINDOW:-3}
