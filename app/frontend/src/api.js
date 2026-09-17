@@ -81,6 +81,31 @@ export async function createTankaTask({ sessionId, theme, maxRefines = 3, manual
   return res.json()
 }
 
+// 構想の下書き (#63): お題 (+季語 / 季節) から LLM に情景候補・心情・背景を出させるタスクを起動。
+// 季語があれば季節は backend が辞書から確定するので送らない (不整合 422 を避ける)。
+export async function createPlanDraft({ sessionId, theme, kigo = null, season = null, nCandidates = 3 }) {
+  const body = { session_id: sessionId, theme, n_candidates: nCandidates }
+  if (kigo) body.kigo = kigo
+  else if (season) body.season = season
+  const res = await fetch('/api/plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`createPlanDraft HTTP ${res.status}: ${text}`)
+  }
+  return res.json()
+}
+
+// タスク文書 (#61): status と、終了していれば result (SSE を購読しないポーリング経路)
+export async function getTask(taskId) {
+  const res = await fetch(`/api/tasks/${taskId}`)
+  if (!res.ok) throw new Error(`getTask HTTP ${res.status}`)
+  return res.json()
+}
+
 // 手動構想モードの季語ドロップダウン用: 季節ラベル → 季語リスト
 export async function getKigo() {
   const res = await fetch('/api/kigo')
