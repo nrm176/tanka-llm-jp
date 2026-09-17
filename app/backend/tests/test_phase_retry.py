@@ -158,3 +158,33 @@ def test_pipeline_survives_one_compose_failure(monkeypatch):
     complete = [e for e in evs if e["type"] == "complete"][0]
     assert complete["tanka"].startswith("夏の夜に") and complete["kigo"] == "蛍"
     assert state["compose_calls"] == 2
+
+
+# ─── plan_draft (#64 経路) も LLM 例外を 1 回リトライする ───
+
+def test_plan_draft_survives_one_llm_failure(monkeypatch):
+    import validator
+    state = {"calls": 0}
+    draft = json.dumps({"kigo": "蛍", "season": "夏", "image_candidates": ["川辺の蛍", "夜の川面", "光の帯"],
+                        "emotion": "静かな余韻", "background": "夏の夜"}, ensure_ascii=False)
+
+    def stub(phase, messages, *, attempt=None, model=None, rescue_json=True):
+        async def gen():
+            state["calls"] += 1
+            yield {"type": "phase_start", "phase": phase}
+            if state["calls"] == 1:
+                raise RuntimeError("Engine protocol predict stream returned an error: 500")
+            yield {"type": "phase_end", "phase": phase, "text": draft, "raw": draft, "duration_seconds": 0.0}
+        return gen()
+
+    monkeypatch.setattr(tanka, "_run_llm_phase", stub)
+    monkeypatch.setattr(tanka, "PHASE_RETRY_DELAY", 0.0)
+
+    async def run():
+        return [ev async for ev in tanka.plan_draft_stream("夏の川", kigo="蛍", model="m")]
+    evs = asyncio.run(run())
+    types = [e["type"] for e in evs]
+    assert "phase_retry" in types
+    complete = [e for e in evs if e["type"] == "complete"][0]
+    assert complete["kigo"] == "蛍" and complete["attempts"] == 1  # parse 側の attempt は消費していない
+    assert state["calls"] == 2

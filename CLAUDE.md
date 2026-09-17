@@ -324,7 +324,7 @@ validator / reading が fail-loud で起動を止める (silent degrade しな�
 ### 自動テスト (Phase 2 で導入)
 
 ```bash
-# 単体テスト (175 ケース: validator / tasks reducer / db 変換 / llm 合流・救済 / thinking cap 等。副作用ゼロなので LLM/DB 不要)
+# 単体テスト (244 ケース: validator / tasks reducer / db 変換 / llm 合流・救済 / thinking cap 等。副作用ゼロなので LLM/DB 不要)
 cd app/backend && uv run pytest -q
 ```
 
