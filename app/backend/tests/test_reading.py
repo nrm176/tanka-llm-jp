@@ -82,6 +82,20 @@ def test_modern_heteronyms():
     assert hira("行方も知らず") == "ゆくえもしらず"       # なめがた でなく
 
 
+def test_run2_disputed_curation():
+    """self-critique-paired run 2 の mora_count_disputed 65 件精査で確定した pykakasi 誤読 (v2)。
+    いずれも辞書で一意に決まる読みで、モデル読みへの迎合ではない (朝光 はモデル読み あさひかり
+    でなく辞書読み あさかげ を採る)。"""
+    assert hira("儚さや") == "はかなさや"                # ぼうさや でなく。活用形も同じ語幹
+    assert hira("儚く散りぬ") == "はかなくちりぬ"
+    assert hira("儚い夢") == "はかないゆめ"
+    assert hira("朝光射す") == "あさかげさす"            # ともみつ (人名読み) でなく。ふりがな文庫 88.9%
+    assert hira("清らか息吹") == "きよらかいぶき"        # きよしらか (清+らか 分割) でなく
+    assert hira("風の声聞く") == "かぜのこえきく"        # しょうもん (仏教語) でなく
+    assert hira("声聞こゆ") == "こえきこゆ"              # 語幹置換なので 聞 の活用形を全て救う
+    assert hira("鳥の声聞きて") == "とりのこえききて"
+
+
 # ─── 最長一致: 複合語の保護 (月→つき の単純置換で壊れないこと) ───
 
 def test_longest_match_protects_compounds():

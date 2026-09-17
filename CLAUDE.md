@@ -161,6 +161,11 @@ validator / reading が fail-loud で起動を止める (silent degrade しな�
 - **MeCab + UniDic 移行は実測の結果、棚上げ** (UniDic 72% < override 100%。露→ろ 等の退行もある)。
   詳細は `app/docs/verifier-accuracy-pykakasi-vs-mecab.md`。誤読を見つけたら kogo_yomi.json に
   エビデンス付きで追記 (推測エントリ禁止)。「夜」は よ/よる 両読み正当のため意図的に対象外
+- 【追記 2026-09】**`mora_count_disputed` の大半は pykakasi でなくモデルの誤り**。run 2 の 65 件精査で
+  pykakasi 誤読は 12% (4 語を v2 で追加: 儚・朝光・清らか・声聞)、両読み正当 25%、**モデルが規定拍に
+  合わせて読みを捏造 57%** (五月雨→ごがつあめ、霜→ふゆ、本文のかなすら写せていないもの 15 件)。
+  規定を知るモデルの読み欄は自己申告であり Goodhart 化する。**override の追加で disputed 率は下がらない**
+  (1 割が上限)。分類表は `app/backend/eval/experiments/self-critique-paired/disputed-curation.md`
 
 ### 6.4 8B モデルの指示追従の弱さ
 - **Plan で決めた季節/季語を Compose で勝手に変える**現象がよく起きる
