@@ -280,7 +280,7 @@ def _reading_plausible(body: str, model_reading: str, canonical: str) -> tuple[b
     return True, ""
 
 
-def _rule_mora_count(t: Tanka) -> list[Violation]:
+def _rule_mora_count(t: Tanka, *, strict_disputed: bool = True) -> list[Violation]:
     """各句の拍数 (5-7-5-7-7) を漢字本体から pykakasi で独立計算したもので検証する。
 
     3 段階の判定 (Phase 1 B5b):
@@ -300,7 +300,8 @@ def _rule_mora_count(t: Tanka) -> list[Violation]:
 
         rejected_note = ""
         if model_count == expected[i]:
-            plausible, why = _reading_plausible(line.body, line.reading, canonical)
+            # strict_disputed=False は #76 以前の無条件救済 (paired A/B の対照 arm 用。既定は True)
+            plausible, why = _reading_plausible(line.body, line.reading, canonical) if strict_disputed else (True, "")
             if plausible:
                 # モデル提供の読みは正しい拍数で本文とも整合。pykakasi の辞書違いの可能性が高い。
                 out.append(_violation(
@@ -641,6 +642,7 @@ def evaluate(
     expected_season: str | None = None,
     expected_kigo: str | None = None,
     theme: str | None = None,
+    strict_disputed: bool = True,
 ) -> ValidationResult:
     """通常ルール + (任意で) Plan 由来の期待値・お題との整合チェック。
 
@@ -649,7 +651,8 @@ def evaluate(
     theme を渡すと、お題が指定する時間帯 (夕暮れ等) と短歌の時刻矛盾を検出する。"""
     violations: list[Violation] = []
     for rule in RULES:
-        violations.extend(rule(t))
+        # strict_disputed は mora_count の救済条件 (#76) の per-request 上書き。他ルールは引数を取らない
+        violations.extend(rule(t, strict_disputed=strict_disputed) if rule is _rule_mora_count else rule(t))
 
     if expected_season and t.season != expected_season:
         violations.append(_violation(

@@ -150,6 +150,9 @@ class TankaRequest(BaseModel):
     # self-critique フェーズの per-request 上書き (eval/ablation 用)。None なら config.SELF_CRITIQUE_ENABLED
     # に従う (従来挙動)。paired A/B でお題ごとに ON/OFF を交互実行するために必要 (FINDINGS §5.5)
     self_critique: bool | None = None
+    # mora_count_disputed の救済条件 (#76) の per-request 上書き (eval 用)。None = True (厳格)。
+    # False は #76 以前の無条件救済で、paired A/B の対照 arm にのみ使う
+    strict_disputed: bool | None = None
 
 
 class PlanDraftRequest(BaseModel):
@@ -367,9 +370,10 @@ async def tanka_endpoint(req: TankaRequest) -> dict:
     db.append_message(sid, {"kind": "user", "content": f"tanka:{req.theme}"})
     task = db.create_task(sid, kind="tanka", input_data={
         "theme": req.theme, "max_refines": req.max_refines, "model": model,
-        "manual_plan": manual_plan, "self_critique": req.self_critique})
+        "manual_plan": manual_plan, "self_critique": req.self_critique, "strict_disputed": req.strict_disputed})
     tasks.start_tanka(task["id"], sid, req.theme, req.max_refines,
-                      model=model, manual_plan=manual_plan, self_critique=req.self_critique)
+                      model=model, manual_plan=manual_plan, self_critique=req.self_critique,
+                      strict_disputed=req.strict_disputed)
 
     return {"task_id": task["id"], "session_id": sid, "kind": "tanka"}
 
