@@ -225,6 +225,10 @@ def apply_event_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
     elif etype == "llm_error":
         state["llm_error"] = event.get("message")
         state["llm_error_recovered"] = event.get("recovered", False)
+    elif etype == "phase_retry":
+        # plan / compose の LLM エラーからの再試行 (#67)。透過的に回復するが、発生率は追えるようにする
+        state.setdefault("phase_retries", []).append(
+            {"phase": event.get("phase"), "message": event.get("message")})
 
 
 def tanka_result_from_state(state: dict[str, Any]) -> dict[str, Any] | None:
