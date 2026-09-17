@@ -58,3 +58,6 @@ notes.md
 
 # eval のお題セットは版管理対象 (skill: subset は eval/ 内にファイルとして置く。*.json の全域 ignore の例外)
 !app/backend/eval/eval_themes*.json
+
+# 実験のラベル付きデータ (再現に必要なキュレーション) も版管理する
+!app/backend/eval/experiments/self-critique-paired/disputed-labels.json

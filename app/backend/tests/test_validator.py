@@ -332,6 +332,82 @@ def test_mora_count_off_by_two_is_critical():
     assert "mora_count" in rules_fired(result)
 
 
+# ─── mora_count_disputed の救済条件 (#76): 本文の別読みとして妥当な読みだけ救済する ───
+
+def _messages(result, rule):
+    return [v.message for v in result.violations if v.rule == rule]
+
+
+def test_align_reading_extracts_kanji_run_readings():
+    assert validator._align_reading("風の声聞く", "かぜのこえきく") == ["かぜ", "こえき"]
+    assert validator._align_reading("ひさかたの", "ひさかたの") == []
+    assert validator._align_reading("白き灯", "しろきとう") == ["しろ", "とう"]
+    # 本文のかな (助詞・送り仮名) を写せていない読みは整列できない
+    assert validator._align_reading("心に灯りや", "こころあかりや") is None     # 助詞「に」脱落
+    assert validator._align_reading("静かに置く", "しずかにおくる") is None     # 送り仮名「く」→「くる」
+    assert validator._align_reading("道へ流れ", "みちへながれい") is None      # 末尾に余分な「い」
+
+
+def test_disputed_rescues_plausible_alternative_reading():
+    # 灯 (ともしび/とう/ひ) のように漢字 1 語の読み差だけなら従来どおり救済
+    t = make_tanka(kigo="蛍", season="夏", lines=[
+        ("蛍の火", "ほたるのひ"),
+        ("川面に揺れて", "かわもにゆれて"),
+        ("白き灯", "しろきとう"),            # pykakasi しろきともしび (7) / モデル 5
+        ("ひとり佇み", "ひとりたたずみ"),
+        ("風を感じぬ", "かぜをかんじぬ"),
+    ])
+    result = validator.evaluate(t)
+    fired = rules_fired(result)
+    assert "mora_count_disputed" in fired
+    assert "mora_count" not in fired and "mora_count_off_by_one" not in fired
+
+
+def test_disputed_rejected_when_reading_drops_kana():
+    # 「心に灯りや」(8 拍) をモデルが「こころあかりや」(7) と申告 → 助詞脱落なので救済せず off_by_one
+    t = make_tanka(kigo="蛍", season="夏", lines=[
+        ("蛍の火", "ほたるのひ"),
+        ("心に灯りや", "こころあかりや"),
+        ("闇の中", "やみのなか"),
+        ("ひとり佇み", "ひとりたたずみ"),
+        ("風を感じぬ", "かぜをかんじぬ"),
+    ])
+    result = validator.evaluate(t)
+    fired = rules_fired(result)
+    assert "mora_count_disputed" not in fired
+    msgs = _messages(result, "mora_count_off_by_one")
+    assert any("心に灯りや" in m and "本文を整えてください" in m for m in msgs)
+
+
+def test_disputed_rejected_when_multiple_kanji_differ():
+    # 「切なさ胸」pykakasi せつなさむね (6) / モデル きれなさむむね (7): 切 と 胸 の 2 箇所で違う → 捏造
+    t = make_tanka(kigo="蛍", season="夏", lines=[
+        ("蛍の火", "ほたるのひ"),
+        ("切なさ胸", "きれなさむむね"),
+        ("闇の中", "やみのなか"),
+        ("ひとり佇み", "ひとりたたずみ"),
+        ("風を感じぬ", "かぜをかんじぬ"),
+    ])
+    result = validator.evaluate(t)
+    assert "mora_count_disputed" not in rules_fired(result)
+    assert any("2 箇所" in m for m in _messages(result, "mora_count_off_by_one"))
+
+
+def test_disputed_rejected_falls_to_critical_when_gap_is_large():
+    # 「煙る寺の灯」pykakasi けぶるてらのともしび (10) / モデル けむりてらのひ (7): 助詞脱落 → -10 critical
+    t = make_tanka(kigo="蛍", season="夏", lines=[
+        ("蛍の火", "ほたるのひ"),
+        ("煙る寺の灯", "けむりてらのひ"),
+        ("闇の中", "やみのなか"),
+        ("ひとり佇み", "ひとりたたずみ"),
+        ("風を感じぬ", "かぜをかんじぬ"),
+    ])
+    result = validator.evaluate(t)
+    fired = rules_fired(result)
+    assert "mora_count" in fired and "mora_count_disputed" not in fired
+    assert any("採用しません" in m for m in _messages(result, "mora_count"))
+
+
 # ─── kireji / 体言止め (Phase 1 B5a + B5c) ───
 
 def test_kireji_present_no_violation():

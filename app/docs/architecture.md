@@ -481,7 +481,7 @@ parse_tanka_json (code fence / 前後散文を剥がす + JSON.loads)
      ▼
 RULES (副作用なしの check 関数群)
    ├─ _rule_mora_count           critical -10  拍数 5-7-5-7-7
-   ├─ _rule_mora_count_disputed  minor    -3   pykakasi だけ違う (古典読み)
+   ├─ _rule_mora_count_disputed  minor    -3   pykakasi だけ違う (古典読み)。モデル読みが本文の別読みとして妥当なときのみ (#76)
    ├─ _rule_kigo_present         critical -25  宣言季語が本文に出るか
    ├─ _rule_kigo_unique          major    -15  ちょうど 1 回か
    ├─ _rule_kigo_in_dictionary   minor    -5   歳時記辞書に登録あるか
@@ -739,7 +739,7 @@ TANKA_SELF_CRITIQUE=0 docker compose up -d backend   # 設定を変えて backen
 指標: 初回合格率 / 総合合格率 / 平均 attempt 数 / 平均最終スコア / plateau 率 /
 スコア分布 / ルール別違反頻度。詳細は [`eval/README.md`](../backend/eval/README.md)。
 
-`validator` は副作用ゼロの純関数集合なので pytest で単体テスト可能 (`uv run pytest`、246 ケース。validator 以外の純関数部分も含む)。
+`validator` は副作用ゼロの純関数集合なので pytest で単体テスト可能 (`uv run pytest`、251 ケース。validator 以外の純関数部分も含む)。
 
 ---
 
