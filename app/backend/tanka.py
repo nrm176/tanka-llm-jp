@@ -257,7 +257,8 @@ async def plan_draft_stream(theme: str, *, kigo: str | None = None, season: str 
     last_error = "unknown"
     for attempt in range(max_attempts):
         text = ""
-        async for ev in _run_llm_phase("plan_draft", messages, attempt=attempt, model=model):
+        # LLM 例外は 1 回リトライ (#67 と同型)。parse 失敗の再試行 (このループ) とは別レイヤ
+        async for ev in _run_llm_phase_with_retry("plan_draft", messages, attempt=attempt, model=model):
             if ev["type"] == "phase_end":
                 text = ev["text"]
             yield ev
