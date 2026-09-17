@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>短歌生成チャット — プロジェクト解説</title>
+<meta name="description" content="LM Studio 上のローカル 8B モデルに、決定的検証器と改稿ループで短歌を詠ませるチャットの設計と知見">
+<style>
+  /* ──────────────────────────────────────────────────────────
+     原稿用紙と朱筆
+     地は升目罫の原稿用紙、歌は拍セルで数え、validator の指摘だけを朱で入れる。
+     藍は構造 (図・リンク・現在位置)、若竹は合格、四季は歳時記の伝統色。
+     ────────────────────────────────────────────────────────── */
+  :root {
+    color-scheme: light;
+    --paper:     #f9f9f6;                 /* 胡粉 */
+    --paper-2:   #ffffff;                 /* 升目の上に載せる紙 */
+    --grid:      rgba(58, 108, 88, .13);  /* 緑灰の罫 (原稿用紙) */
+    --grid-2:    rgba(58, 108, 88, .38);  /* 拍セルの枠 */
+    --ink:       #1b1e23;                 /* 墨 */
+    --ink-2:     #5b6068;                 /* 薄墨 */
+    --ink-3:     #8d9198;                 /* 補足 */
+    --rule:      #d9ddd8;                 /* 罫線 */
+    --shu:       #c8412b;                 /* 朱 — validator / critique 専用 */
+    --shu-bg:    rgba(200, 65, 43, .08);
+    --ai:        #2e5f8f;                 /* 藍 — 構造 */
+    --ai-bg:     rgba(46, 95, 143, .08);
+    --take:      #3f8a58;                 /* 若竹 — 合格 */
+    --take-bg:   rgba(63, 138, 88, .10);
+    --haru:      #d3798f;                 /* 桜 */
+    --natsu:     #3d84a8;                 /* 縹 */
+    --aki:       #c4732b;                 /* 柿 */
+    --fuyu:      #566a8c;                 /* 鉄紺 */
+    --shinnen:   #b8931c;                 /* 山吹 */
+    --serif: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", "Noto Serif JP", "BIZ UDMincho", serif;
+    --sans:  "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif;
+    --mono:  ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --measure: 40rem;
+    --wide: 68rem;
+    --cell: 28px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --paper:   #15171b;
+      --paper-2: #1c1f25;
+      --grid:    rgba(120, 170, 145, .11);
+      --grid-2:  rgba(120, 170, 145, .42);
+      --ink:     #e9e7e0;
+      --ink-2:   #a6a69f;
+      --ink-3:   #7b7c78;
+      --rule:    #2d3138;
+      --shu:     #e8664f;
+      --shu-bg:  rgba(232, 102, 79, .12);
+      --ai:      #86b0e0;
+      --ai-bg:   rgba(134, 176, 224, .12);
+      --take:    #6fbf85;
+      --take-bg: rgba(111, 191, 133, .13);
+      --haru:    #e08ea3;
+      --natsu:   #63a6c9;
+      --aki:     #d98d47;
+      --fuyu:    #8ea0c2;
+      --shinnen: #d4b13a;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper:   #15171b;
+    --paper-2: #1c1f25;
+    --grid:    rgba(120, 170, 145, .11);
+    --grid-2:  rgba(120, 170, 145, .42);
+    --ink:     #e9e7e0;
+    --ink-2:   #a6a69f;
+    --ink-3:   #7b7c78;
+    --rule:    #2d3138;
+    --shu:     #e8664f;
+    --shu-bg:  rgba(232, 102, 79, .12);
+    --ai:      #86b0e0;
+    --ai-bg:   rgba(134, 176, 224, .12);
+    --take:    #6fbf85;
+    --take-bg: rgba(111, 191, 133, .13);
+    --haru:    #e08ea3;
+    --natsu:   #63a6c9;
+    --aki:     #d98d47;
+    --fuyu:    #8ea0c2;
+    --shinnen: #d4b13a;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --paper:   #f9f9f6; --paper-2: #ffffff;
+    --grid: rgba(58,108,88,.13); --grid-2: rgba(58,108,88,.38);
+    --ink: #1b1e23; --ink-2: #5b6068; --ink-3: #8d9198; --rule: #d9ddd8;
+    --shu: #c8412b; --shu-bg: rgba(200,65,43,.08);
+    --ai: #2e5f8f; --ai-bg: rgba(46,95,143,.08);
+    --take: #3f8a58; --take-bg: rgba(63,138,88,.10);
+    --haru: #d3798f; --natsu: #3d84a8; --aki: #c4732b; --fuyu: #566a8c; --shinnen: #b8931c;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html { font-size: 16px; -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    font-size: 1rem;
+    line-height: 1.85;
+    color: var(--ink);
+    background-color: var(--paper);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: var(--cell) var(--cell);
+    background-position: 0 0;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  a { color: var(--ai); text-decoration-thickness: 1px; text-underline-offset: .18em; }
+  a:hover { text-decoration-thickness: 2px; }
+  :focus-visible { outline: 2px solid var(--ai); outline-offset: 2px; border-radius: 2px; }
+  code, kbd, .mono { font-family: var(--mono); font-size: .88em; }
+  code { background: var(--paper-2); border: 1px solid var(--rule); border-radius: 3px; padding: .05em .35em; color: var(--ink); }
+  pre { margin: 0; overflow-x: auto; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 6px; padding: .9rem 1.1rem; line-height: 1.6; }
+  pre code { border: 0; background: transparent; padding: 0; font-size: .82rem; }
+  strong { font-weight: 600; }
+  em { font-style: normal; font-weight: 600; color: var(--ai); }
+  .shu { color: var(--shu); }
+  .num { font-variant-numeric: tabular-nums; }
+  .small { font-size: .84rem; color: var(--ink-2); }
+  .x-scroll { overflow-x: auto; }
+
+  /* ── 骨格: 左に目次、右に本文 ── */
+  .page { display: grid; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 1120px) {
+    .page { grid-template-columns: 15rem minmax(0, 1fr); }
+  }
+  .rail {
+    display: none;
+    position: sticky; top: 0; align-self: start; height: 100vh;
+    padding: 2.2rem 1.2rem 2rem 1.6rem;
+    border-right: 1px solid var(--rule);
+    background: var(--paper);
+    overflow-y: auto;
+  }
+  @media (min-width: 1120px) { .rail { display: flex; flex-direction: column; gap: 1.4rem; } }
+  .rail .brand { font-family: var(--serif); font-size: 1.05rem; letter-spacing: .06em; }
+  .rail .brand small { display: block; font-family: var(--mono); font-size: .68rem; color: var(--ink-3); letter-spacing: .12em; margin-top: .2rem; }
+  .toc { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .1rem; }
+  .toc a {
+    display: block; padding: .28rem .6rem; border-left: 2px solid transparent;
+    color: var(--ink-2); text-decoration: none; font-size: .86rem; line-height: 1.5;
+  }
+  .toc a:hover { color: var(--ink); }
+  .toc a[aria-current="true"] { color: var(--ai); border-left-color: var(--ai); }
+  .toc a .k { font-family: var(--mono); font-size: .66rem; letter-spacing: .12em; color: var(--ink-3); margin-right: .45rem; }
+  .theme-btn {
+    margin-top: auto; align-self: flex-start;
+    font: inherit; font-size: .78rem; color: var(--ink-2);
+    background: var(--paper-2); border: 1px solid var(--rule); border-radius: 999px;
+    padding: .3rem .8rem; cursor: pointer;
+  }
+  .theme-btn:hover { color: var(--ink); border-color: var(--ink-3); }
+
+  main { min-width: 0; padding: 0 1.25rem 6rem; }
+  @media (min-width: 720px) { main { padding: 0 3rem 6rem; } }
+  .col { max-width: var(--wide); margin: 0 auto; }
+  .prose { max-width: var(--measure); }
+  .prose p { margin: 0 0 1rem; }
+  .prose ul, .prose ol { margin: 0 0 1rem; padding-left: 1.3rem; }
+  .prose li { margin: .15rem 0; }
+  .prose li::marker { color: var(--ink-3); }
+
+  /* ── 見出し ── */
+  section { padding: 3.6rem 0 1.4rem; scroll-margin-top: 1.5rem; }
+  section + section { border-top: 1px solid var(--rule); }
+  .kicker {
+    font-family: var(--mono); font-size: .7rem; letter-spacing: .22em; color: var(--ai);
+    text-transform: uppercase; margin: 0 0 .5rem;
+  }
+  h1, h2, h3 { font-family: var(--serif); font-weight: 600; line-height: 1.35; text-wrap: balance; margin: 0; letter-spacing: .01em; }
+  h2 { font-size: 1.75rem; margin-bottom: 1.2rem; }
+  h3 { font-size: 1.15rem; margin: 2rem 0 .7rem; }
+  h4 { font-family: var(--sans); font-weight: 600; font-size: .92rem; margin: 1.4rem 0 .5rem; letter-spacing: .02em; }
+  .lead { font-size: 1.08rem; color: var(--ink-2); max-width: var(--measure); }
+
+  /* ── ヒーロー ── */
+  .hero { padding: 3.4rem 0 2.6rem; }
+  .hero h1 { font-size: clamp(2rem, 4.4vw, 3rem); }
+  .hero .sub { font-size: 1.08rem; color: var(--ink-2); margin: .9rem 0 0; max-width: 44rem; }
+  .hero-meta { display: flex; flex-wrap: wrap; gap: .5rem 1.4rem; margin: 1.1rem 0 0; font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; color: var(--ink-3); }
+  .hero-meta span b { color: var(--ink-2); font-weight: 500; }
+
+  .specimen {
+    margin-top: 2.4rem;
+    display: grid; grid-template-columns: minmax(0, 1fr);
+    gap: 1.6rem;
+    background: var(--paper-2); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 1.6rem 1.4rem;
+  }
+  @media (min-width: 860px) {
+    .specimen { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); padding: 2rem 2.2rem; align-items: start; }
+  }
+  .specimen .cap { font-family: var(--mono); font-size: .7rem; letter-spacing: .16em; color: var(--ink-3); margin: 0 0 .9rem; }
+
+  /* 歌 = 拍セル。広い画面では縦書きで右から左、狭い画面では横に 5 行 */
+  .poem { display: flex; flex-direction: column; gap: .55rem; }
+  .ku { display: flex; align-items: center; gap: .5rem .8rem; flex-wrap: wrap; }
+  .ku .body { font-family: var(--serif); font-size: 1.4rem; letter-spacing: .1em; min-width: 7em; line-height: 1.2; }
+  .ku .cellcol { display: flex; align-items: center; gap: .5rem; margin-left: auto; }
+  .cells { display: flex; gap: 3px; }
+  .cell { width: 13px; height: 13px; border: 1px solid var(--grid-2); background: var(--ink); border-radius: 1px; }
+  .cell.extra { background: transparent; border-color: var(--shu); border-style: dashed; }
+  .ku .n { font-family: var(--mono); font-size: .78rem; color: var(--ink-2); min-width: 1.5em; }
+  .ku .n .mark { color: var(--shu); margin-left: .3em; }
+  @media (min-width: 860px) {
+    .poem { flex-direction: row-reverse; justify-content: flex-end; gap: 1.5rem; height: 21rem; }
+    .ku { flex-direction: row; align-items: flex-start; gap: .55rem; }
+    .ku .body { writing-mode: vertical-rl; min-width: 0; font-size: 1.6rem; letter-spacing: .16em; line-height: 1; }
+    .cells { flex-direction: column; margin-top: .15rem; }
+    .ku .n { writing-mode: horizontal-tb; align-self: flex-start; margin-top: .1rem; }
+    .ku .cellcol { display: flex; flex-direction: column; gap: .35rem; align-items: center; }
+    .ku .n { min-width: 0; text-align: center; }
+    .ku .n .mark { display: block; margin: 0; }
+  }
+  .poem-foot { font-size: .82rem; color: var(--ink-2); margin: .9rem 0 0; }
+
+  .card { border-top: 1px solid var(--rule); }
+  .card dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .35rem 1.1rem; margin: 0; font-size: .9rem; }
+  .card dt { color: var(--ink-3); font-family: var(--mono); font-size: .72rem; letter-spacing: .1em; padding-top: .25rem; }
+  .card dd { margin: 0; }
+  .score-line { display: flex; align-items: baseline; gap: .8rem; margin: 0 0 .9rem; font-family: var(--mono); }
+  .score-line .big { font-size: 2.6rem; line-height: 1; font-weight: 500; letter-spacing: -.02em; }
+  .score-line .of { color: var(--ink-3); font-size: .9rem; }
+  .badge { display: inline-block; font-family: var(--mono); font-size: .68rem; letter-spacing: .12em; padding: .18rem .55rem; border-radius: 3px; border: 1px solid currentColor; line-height: 1.5; }
+  .badge.pass { color: var(--take); background: var(--take-bg); }
+  .badge.fail { color: var(--shu); background: var(--shu-bg); }
+  .badge.minor { color: var(--ink-2); }
+  .critique { font-family: var(--mono); font-size: .78rem; color: var(--shu); background: var(--shu-bg); border-left: 2px solid var(--shu); padding: .5rem .8rem; border-radius: 0 4px 4px 0; margin: .6rem 0 0; line-height: 1.6; }
+  .lesson-list { list-style: none; padding: 0; margin: .3rem 0 0; font-size: .8rem; color: var(--ink-2); }
+  .lesson-list li { padding: .2rem 0; border-top: 1px dashed var(--rule); }
+  .lesson-list li:first-child { border-top: 0; }
+
+  /* ── 3 つの賭け ── */
+  .three { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); margin: 1.6rem 0 0; }
+  @media (min-width: 720px) { .three { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .three > div { background: var(--paper-2); border: 1px solid var(--rule); border-radius: 8px; padding: 1.1rem 1.2rem; }
+  .three h3 { margin: 0 0 .4rem; font-size: 1.05rem; }
+  .three p { margin: 0; font-size: .9rem; color: var(--ink-2); }
+  .three .tag { font-family: var(--mono); font-size: .68rem; letter-spacing: .14em; color: var(--ai); margin-bottom: .4rem; }
+
+  /* ── 表 ── */
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; background: var(--paper-2); }
+  th, td { text-align: left; padding: .5rem .75rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-weight: 600; font-size: .74rem; letter-spacing: .08em; color: var(--ink-2); background: var(--paper-2); }
+  td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  tbody tr:last-child td { border-bottom: 1px solid var(--rule); }
+  .tbl { border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; margin: 1rem 0; }
+  .tbl.x-scroll { overflow-x: auto; }
+  .sev { font-family: var(--mono); font-size: .7rem; letter-spacing: .08em; padding: .1rem .4rem; border-radius: 3px; }
+  .sev.critical { color: var(--shu); background: var(--shu-bg); }
+  .sev.major { color: var(--aki); background: rgba(196,115,43,.12); }
+  .sev.minor { color: var(--ink-2); background: var(--ai-bg); }
+
+  /* ── 図の共通 ── */
+  figure { margin: 1.4rem 0; }
+  figcaption { font-size: .8rem; color: var(--ink-2); margin-top: .6rem; }
+  .fig { background: var(--paper-2); border: 1px solid var(--rule); border-radius: 10px; padding: 1.2rem; overflow-x: auto; }
+  svg { display: block; max-width: 100%; height: auto; font-family: var(--sans); }
+  svg text { fill: var(--ink); font-size: 13px; }
+  svg .lbl { font-size: 11.5px; fill: var(--ink-2); }
+  svg .lbl-mono { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-3); letter-spacing: .05em; }
+  svg .bound { fill: none; stroke: var(--ink-3); stroke-dasharray: 5 4; stroke-width: 1; }
+  svg .bound-solid { fill: var(--ai-bg); stroke: var(--ai); stroke-width: 1; }
+  svg .node { fill: var(--paper-2); stroke: var(--ink); stroke-width: 1.2; }
+  svg .node-llm { fill: var(--paper-2); stroke: var(--shu); stroke-width: 1.4; }
+  svg .store { fill: var(--paper-2); stroke: var(--ink-2); stroke-width: 1.1; }
+  svg .edge { fill: none; stroke: var(--ink-2); stroke-width: 1.3; marker-end: url(#arr); }
+  svg .edge-dashed { stroke-dasharray: 4 3; }
+  svg .edge-shu { stroke: var(--shu); marker-end: url(#arr-shu); }
+  svg .title { font-size: 13.5px; font-weight: 600; }
+
+  /* ── パイプライン stepper ── */
+  .stepper { display: flex; flex-wrap: wrap; gap: .4rem; margin: 1.4rem 0 0; }
+  .stepper button {
+    font: inherit; font-size: .84rem; line-height: 1.4;
+    background: var(--paper-2); color: var(--ink-2); border: 1px solid var(--rule); border-radius: 999px;
+    padding: .38rem .9rem; cursor: pointer; display: inline-flex; align-items: center; gap: .45rem;
+  }
+  .stepper button .i { font-family: var(--mono); font-size: .66rem; letter-spacing: .1em; color: var(--ink-3); }
+  .stepper button:hover { border-color: var(--ink-3); color: var(--ink); }
+  .stepper button[aria-pressed="true"] { background: var(--ai); border-color: var(--ai); color: var(--paper-2); }
+  .stepper button[aria-pressed="true"] .i { color: rgba(255,255,255,.75); }
+  .stepper button.llm { border-style: dashed; }
+  .stepper button[data-llm="1"]::after { content: "LLM"; font-family: var(--mono); font-size: .6rem; letter-spacing: .1em; color: var(--shu); }
+  .stepper button[aria-pressed="true"][data-llm="1"]::after { color: #ffd6cf; }
+  .stepper .loop { width: 100%; font-size: .74rem; color: var(--ink-3); font-family: var(--mono); letter-spacing: .06em; padding-left: .3rem; }
+  .step-detail {
+    margin-top: 1rem; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 10px; padding: 1.2rem 1.4rem;
+    display: grid; gap: .9rem 1.6rem; grid-template-columns: minmax(0, 1fr);
+  }
+  @media (min-width: 860px) { .step-detail { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); } }
+  .step-detail h3 { margin: 0 0 .4rem; font-size: 1.15rem; }
+  .step-detail p { margin: 0 0 .6rem; font-size: .92rem; }
+  .step-detail .facts { font-size: .84rem; }
+  .step-detail .facts dt { font-family: var(--mono); font-size: .68rem; letter-spacing: .12em; color: var(--ink-3); margin-top: .6rem; }
+  .step-detail .facts dd { margin: .1rem 0 0; }
+  .step-detail .facts code { font-size: .8rem; }
+
+  /* messages 配列 */
+  .msgs { display: flex; flex-direction: column; gap: .35rem; margin-top: .6rem; }
+  .msg { display: grid; grid-template-columns: 5.6rem minmax(0, 1fr); gap: .8rem; align-items: start; font-size: .84rem; border: 1px solid var(--rule); border-radius: 6px; padding: .5rem .7rem; background: var(--paper-2); }
+  .msg .role { font-family: var(--mono); font-size: .68rem; letter-spacing: .12em; color: var(--ink-3); padding-top: .25rem; }
+  .msg.system { border-color: var(--ink-3); }
+  .msg.dyn { border-left: 3px solid var(--ai); }
+  .msg.round { border-left: 3px solid var(--shu); }
+  .msg .note { display: block; color: var(--ink-3); font-size: .74rem; }
+  .msg-brace { font-size: .74rem; color: var(--ink-3); font-family: var(--mono); letter-spacing: .06em; padding-left: .2rem; }
+  .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; margin: .4rem 0 .2rem; }
+  .seg button { font: inherit; font-size: .8rem; background: var(--paper-2); color: var(--ink-2); border: 0; padding: .3rem .8rem; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--rule); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper-2); }
+
+  /* ── 減点シミュレータ ── */
+  .sim { display: grid; gap: 1.2rem; grid-template-columns: minmax(0, 1fr); background: var(--paper-2); border: 1px solid var(--rule); border-radius: 10px; padding: 1.2rem 1.4rem; margin: 1.2rem 0; }
+  @media (min-width: 860px) { .sim { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); } }
+  .sim fieldset { border: 0; margin: 0; padding: 0; }
+  .sim legend { font-weight: 600; font-size: .9rem; margin-bottom: .5rem; }
+  .sim .rules { display: grid; grid-template-columns: minmax(0, 1fr); gap: .15rem; }
+  @media (min-width: 560px) { .sim .rules { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .sim label { display: flex; align-items: center; gap: .5rem; font-size: .82rem; padding: .22rem .3rem; border-radius: 4px; cursor: pointer; }
+  .sim label:hover { background: var(--ai-bg); }
+  .sim label input { accent-color: var(--shu); margin: 0; }
+  .sim label .w { font-family: var(--mono); font-size: .74rem; color: var(--shu); min-width: 2.4em; text-align: right; }
+  .sim label .r { font-family: var(--mono); font-size: .74rem; color: var(--ink-2); }
+  .sim .group { font-family: var(--mono); font-size: .66rem; letter-spacing: .14em; color: var(--ink-3); margin: .7rem 0 .2rem; grid-column: 1 / -1; }
+  .gauge { position: sticky; top: 1rem; }
+  .gauge .big { font-family: var(--mono); font-size: 3.2rem; line-height: 1; letter-spacing: -.03em; }
+  .gauge .big small { font-size: 1rem; color: var(--ink-3); letter-spacing: 0; }
+  .bar { position: relative; height: 12px; background: var(--paper); border: 1px solid var(--rule); border-radius: 999px; margin: .8rem 0 .4rem; overflow: visible; }
+  .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--take); border-radius: 999px; transition: width .25s ease, background-color .25s ease; }
+  .bar .fill.fail { background: var(--shu); }
+  .bar .thr { position: absolute; top: -6px; bottom: -6px; left: 80%; width: 2px; background: var(--ink); }
+  .bar .thr::after { content: "80 合格線"; position: absolute; top: -1.3rem; left: -1.6rem; font-family: var(--mono); font-size: .64rem; letter-spacing: .08em; color: var(--ink-2); white-space: nowrap; }
+  @media (prefers-reduced-motion: reduce) { .bar .fill { transition: none; } }
+  .gauge .formula { font-family: var(--mono); font-size: .76rem; color: var(--ink-2); margin-top: .8rem; }
+  .gauge .reset { font: inherit; font-size: .76rem; background: transparent; border: 1px solid var(--rule); color: var(--ink-2); border-radius: 999px; padding: .2rem .7rem; cursor: pointer; margin-top: .8rem; }
+
+  /* ── 誤解と実態 ── */
+  .misread td:first-child { color: var(--ink-2); }
+  .misread td:first-child::before { content: "×"; color: var(--shu); font-weight: 700; margin-right: .5em; }
+  .misread td:last-child::before { content: "○"; color: var(--take); font-weight: 700; margin-right: .5em; }
+
+  /* ── 季節遷移行列 ── */
+  .matrix td, .matrix th { text-align: center; }
+  .matrix td:first-child, .matrix th:first-child { text-align: left; }
+  .matrix td.c { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .matrix td.haru { background: color-mix(in srgb, var(--haru) var(--p, 0%), transparent); }
+  .matrix td.diag { font-weight: 600; }
+  .matrix td.zero { color: var(--ink-3); }
+  .season { display: inline-block; width: .7em; height: .7em; border-radius: 2px; vertical-align: -.02em; margin-right: .35em; }
+  .season.haru { background: var(--haru); } .season.natsu { background: var(--natsu); }
+  .season.aki { background: var(--aki); } .season.fuyu { background: var(--fuyu); } .season.shinnen { background: var(--shinnen); }
+  .ab { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1rem 0; }
+  .ab > div { background: var(--paper-2); border: 1px solid var(--rule); border-radius: 8px; padding: 1rem 1.1rem; }
+  .ab .lab { font-family: var(--mono); font-size: .68rem; letter-spacing: .14em; color: var(--ink-3); }
+  .ab .val { font-family: var(--mono); font-size: 2rem; line-height: 1.1; margin: .2rem 0; }
+  .ab .val.haru { color: var(--haru); } .ab .val.ok { color: var(--take); }
+  .ab .sub { font-size: .8rem; color: var(--ink-2); }
+
+  /* ── 罠リスト ── */
+  .traps { list-style: none; padding: 0; margin: 1rem 0 0; display: grid; gap: .5rem; }
+  .traps li { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); gap: .8rem; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 6px; padding: .6rem .9rem; font-size: .88rem; }
+  .traps .when { font-family: var(--mono); font-size: .7rem; letter-spacing: .08em; color: var(--ink-3); padding-top: .3rem; }
+  .traps b { display: block; font-weight: 600; }
+  .traps span { color: var(--ink-2); }
+  .traps .fix { color: var(--ai); }
+
+  /* ── 依存レイヤ ── */
+  .layers { display: grid; gap: .5rem; margin: 1rem 0; }
+  .layer { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: .8rem; align-items: center; }
+  .layer .lname { font-family: var(--mono); font-size: .7rem; letter-spacing: .12em; color: var(--ink-3); text-align: right; }
+  .layer .mods { display: flex; flex-wrap: wrap; gap: .35rem; }
+  .mod { font-family: var(--mono); font-size: .76rem; background: var(--paper-2); border: 1px solid var(--rule); border-radius: 4px; padding: .15rem .5rem; }
+  .mod.hot { border-color: var(--shu); color: var(--shu); }
+  .mod.ai { border-color: var(--ai); color: var(--ai); }
+  .layer-arrow { padding-left: 7.8rem; color: var(--ink-3); font-size: .8rem; font-family: var(--mono); line-height: 1; }
+  .stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; margin: 1rem 0; }
+  @media (min-width: 720px) { .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .stat { background: var(--paper-2); border: 1px solid var(--rule); border-radius: 8px; padding: .8rem 1rem; }
+  .stat .v { font-family: var(--mono); font-size: 1.5rem; line-height: 1.1; }
+  .stat .l { font-size: .74rem; color: var(--ink-2); margin-top: .2rem; }
+
+  footer { max-width: var(--wide); margin: 3rem auto 0; padding-top: 1.4rem; border-top: 1px solid var(--rule); font-size: .8rem; color: var(--ink-2); }
+  footer ul { margin: .4rem 0 0; padding-left: 1.2rem; }
+  @media print {
+    body { background-image: none; }
+    .rail, .theme-btn { display: none; }
+    .step-detail, .sim, .fig { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav class="rail" aria-label="目次">
+    <div class="brand">短歌生成チャット<small>PROJECT OVERVIEW · 2026-09</small></div>
+    <ul class="toc" id="toc">
+      <li><a href="#what"><span class="k">何</span>これは何か</a></li>
+      <li><a href="#topology"><span class="k">構</span>システム構成</a></li>
+      <li><a href="#pipeline"><span class="k">流</span>生成の流れ</a></li>
+      <li><a href="#validator"><span class="k">検</span>検証器</a></li>
+      <li><a href="#feedback"><span class="k">返</span>フィードバック設計</a></li>
+      <li><a href="#attractor"><span class="k">春</span>春アトラクター</a></li>
+      <li><a href="#eval"><span class="k">測</span>測定で分かったこと</a></li>
+      <li><a href="#principle"><span class="k">則</span>設計原則</a></li>
+      <li><a href="#traps"><span class="k">罠</span>踏んだ罠</a></li>
+      <li><a href="#map"><span class="k">図</span>地図と数字</a></li>
+    </ul>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="配色を切り替える">配色: 自動</button>
+  </nav>
+
+  <main>
+    <div class="col">
+
+      <!-- ─────────────────────────── ヒーロー ─────────────────────────── -->
+      <header class="hero">
+        <p class="kicker">Tanka Chat · LM Studio × FastAPI × React</p>
+        <h1>8B を賢くせず、短歌を詠ませる</h1>
+        <p class="sub">ローカル LLM に短歌を詠ませるチャット。モデルを鍛える代わりに、出口に決定的な検証器を置き、指摘を返して詠み直させる。構想 → 作歌 → 検証 → 改稿のループと、そこから得た知見をまとめた解説。</p>
+        <div class="hero-meta">
+          <span>model <b>llm-jp-4-8b-thinking</b></span>
+          <span>runtime <b>LM Studio :1234</b></span>
+          <span>stack <b>FastAPI · React 18 · MongoDB · Redis Streams</b></span>
+          <span>snapshot <b>2026-09-05</b></span>
+        </div>
+
+        <div class="specimen" aria-label="実際の生成例">
+          <div>
+            <p class="cap">実際の出力 — お題「初秋の風」 2026-09-05 スモークテスト</p>
+            <div class="poem">
+              <div class="ku"><span class="body">雁の声</span><span class="cellcol"><span class="cells" aria-hidden="true"><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i></span><span class="n">5</span></span></div>
+              <div class="ku"><span class="body">松林の風</span><span class="cellcol"><span class="cells" aria-hidden="true"><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell extra"></i></span><span class="n">8<span class="mark">−3</span></span></span></div>
+              <div class="ku"><span class="body">雲立ちぬ</span><span class="cellcol"><span class="cells" aria-hidden="true"><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i></span><span class="n">5</span></span></div>
+              <div class="ku"><span class="body">北へ飛ぶ群れ</span><span class="cellcol"><span class="cells" aria-hidden="true"><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i></span><span class="n">7</span></span></div>
+              <div class="ku"><span class="body">旅立ち願う</span><span class="cellcol"><span class="cells" aria-hidden="true"><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i></span><span class="n">7</span></span></div>
+            </div>
+            <p class="poem-foot">升目はプログラムが数えた拍。二句「松林の風」は pykakasi の読み (まつばやしのかぜ) で 8 拍、モデル申告の読みでは 7 拍。食い違いは <span class="shu">minor −3</span> に留め、字余りとして許容する。</p>
+          </div>
+          <div class="card">
+            <p class="cap">validator の採点</p>
+            <div class="score-line"><span class="big num">97</span><span class="of">/ 100</span><span class="badge pass">合格 · 閾値 80</span></div>
+            <dl>
+              <dt>構想</dt><dd>季語「雁」· 季節「秋」· 情景「薄曇りの空に北へ向かう雁が一列になる」</dd>
+              <dt>試行</dt><dd>1 回 (初稿で合格)</dd>
+              <dt>所要</dt><dd class="num">156.7 秒 (plan 9.6 · compose 36.8 · self-critique 110.3)</dd>
+              <dt>減点</dt><dd><span class="badge minor">minor</span> mora_count_disputed −3</dd>
+            </dl>
+            <div class="critique">✗ [-3 / minor] 二句の拍数がプログラム読みと申告読みで食い違う</div>
+            <p class="small" style="margin:1rem 0 .2rem">このとき compose に注入された長期失敗記憶 (同モデル・同季の直近 3 件):</p>
+            <ul class="lesson-list">
+              <li>失敗 1: お題「秋の月」(季語「秋月」) score=64 → 教訓: 宣言した季語以外の季語は同季でも禁止</li>
+              <li>失敗 2: 同 score=45 → 同じ教訓</li>
+              <li>失敗 3: 同 score=70 → 同じ教訓</li>
+            </ul>
+          </div>
+        </div>
+      </header>
+
+      <!-- ─────────────────────────── これは何か ─────────────────────────── -->
+      <section id="what">
+        <p class="kicker">What it is</p>
+        <h2>これは何か</h2>
+        <div class="prose">
+          <p>ブラウザのチャット画面からお題を投げると、バックエンドが <strong>構想 (Plan) → 作歌 (Compose) → 検証 (Validate) → 改稿 (Refine)</strong> のパイプラインを走らせ、途中経過を SSE で流し、合格した短歌をセッション履歴に保存する。モデルは LM Studio 上のローカル 8B (<code>llm-jp-4-8b-thinking</code>) で、認証なし・localhost 前提の個人向け実験環境。</p>
+          <p>賭けは一つ。<em>モデルを賢くしない</em>。ファインチューニングも大型化もせず、出口に決定的な検証器を置き、モデルには「速くドラフトを出し、指摘に応じて詠み直す」ことだけを求める。8B は指示追従が弱く、構想で決めた季節を作歌で勝手に変える。それを願いではなくルールで矯正する。</p>
+        </div>
+        <div class="three">
+          <div><div class="tag">JSON 強制</div><h3>出力は型で受ける</h3><p>短歌は自由文ではなく JSON (季語・季節・五句の本文と読み・情景・心情)。Pydantic で検証でき、ルールが書ける。</p></div>
+          <div><div class="tag">決定的検証器</div><h3>機械が採点する</h3><p>拍数・季語の唯一性・季違い・構想との整合を副作用なしの純関数で判定。100 点から減点し、80 以上で合格。</p></div>
+          <div><div class="tag">best-of-N 改稿</div><h3>指摘を返して詠み直す</h3><p>不合格なら critique を user メッセージとして返す。固定回数ではなく plateau で止め、全試行の最高点を採用。</p></div>
+        </div>
+      </section>
+
+      <!-- ─────────────────────────── システム構成 ─────────────────────────── -->
+      <section id="topology">
+        <p class="kicker">Topology</p>
+        <h2>システム構成</h2>
+        <p class="lead">4 つのコンテナと、Docker の外で動く LM Studio。LLM 呼び出しは HTTP リクエストの寿命から切り離されている。</p>
+
+        <figure>
+          <div class="fig">
+            <svg viewBox="0 0 960 430" role="img" aria-labelledby="topo-title">
+              <title id="topo-title">システム構成図: ホスト上の LM Studio と Docker ネットワーク内の frontend / backend / mongo / redis</title>
+              <defs>
+                <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--ink-2)"/></marker>
+                <marker id="arr-shu" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--shu)"/></marker>
+              </defs>
+              <!-- Host boundary -->
+              <rect x="16" y="16" width="928" height="398" rx="10" class="bound"/>
+              <text x="32" y="40" class="lbl-mono">HOST (macOS)</text>
+              <!-- Browser -->
+              <rect x="60" y="56" width="180" height="58" rx="6" class="node"/>
+              <text x="150" y="80" text-anchor="middle" class="title">Browser</text>
+              <text x="150" y="99" text-anchor="middle" class="lbl">localhost:5178</text>
+              <!-- LM Studio -->
+              <rect x="716" y="188" width="212" height="90" rx="6" class="node-llm"/>
+              <rect x="722" y="194" width="200" height="78" rx="4" fill="none" stroke="var(--shu)" stroke-width=".6" stroke-dasharray="2 3"/>
+              <text x="822" y="218" text-anchor="middle" class="title">LM Studio  :1234</text>
+              <text x="822" y="238" text-anchor="middle" class="lbl">llm-jp-4-8b-thinking</text>
+              <text x="822" y="256" text-anchor="middle" class="lbl-mono">OpenAI 互換 REST · stream</text>
+              <!-- Docker boundary -->
+              <rect x="40" y="150" width="620" height="250" rx="8" class="bound-solid"/>
+              <text x="56" y="172" class="lbl-mono" fill="var(--ai)">DOCKER NETWORK · docker compose</text>
+              <!-- frontend -->
+              <rect x="60" y="188" width="190" height="80" rx="6" class="node"/>
+              <text x="155" y="214" text-anchor="middle" class="title">frontend  :5178</text>
+              <text x="155" y="233" text-anchor="middle" class="lbl">Vite dev · React 18</text>
+              <text x="155" y="251" text-anchor="middle" class="lbl-mono">/api/* → backend</text>
+              <!-- backend -->
+              <rect x="360" y="188" width="240" height="80" rx="6" class="node"/>
+              <text x="480" y="214" text-anchor="middle" class="title">backend  :8001</text>
+              <text x="480" y="233" text-anchor="middle" class="lbl">FastAPI · uvicorn --reload</text>
+              <text x="480" y="251" text-anchor="middle" class="lbl-mono">asyncio task · SSE · pipeline</text>
+              <!-- mongo (cylinder) -->
+              <g class="store">
+                <path d="M340 318 v52 a60 9 0 0 0 120 0 v-52" class="store"/>
+                <ellipse cx="400" cy="318" rx="60" ry="9" class="store"/>
+              </g>
+              <text x="400" y="346" text-anchor="middle" class="title" style="font-size:12.5px">mongo :27017</text>
+              <text x="400" y="362" text-anchor="middle" class="lbl-mono">sessions / tasks / failures</text>
+              <!-- redis (stream tape) -->
+              <g>
+                <rect x="508" y="312" width="140" height="66" rx="4" class="store"/>
+                <line x1="518" y1="326" x2="638" y2="326" stroke="var(--ink-3)" stroke-width="1"/>
+                <line x1="518" y1="334" x2="638" y2="334" stroke="var(--ink-3)" stroke-width="1"/>
+                <line x1="518" y1="342" x2="600" y2="342" stroke="var(--ink-3)" stroke-width="1"/>
+              </g>
+              <text x="578" y="360" text-anchor="middle" class="title" style="font-size:12.5px">redis :6379</text>
+              <text x="578" y="373" text-anchor="middle" class="lbl-mono">Streams task:{id}:events</text>
+              <!-- edges -->
+              <path d="M150 114 V186" class="edge"/>
+              <text x="160" y="140" class="lbl">POST → task_id</text>
+              <text x="160" y="156" class="lbl">GET …/stream (SSE)</text>
+              <path d="M250 228 H358" class="edge"/>
+              <text x="304" y="221" text-anchor="middle" class="lbl-mono">proxy</text>
+              <path d="M600 228 H714" class="edge edge-shu"/>
+              <text x="657" y="216" text-anchor="middle" class="lbl-mono" style="font-size:9.5px">host.docker.internal</text>
+              <text x="657" y="248" text-anchor="middle" class="lbl-mono" style="font-size:9.5px">read timeout 120s</text>
+              <path d="M410 268 V308" class="edge"/>
+              <text x="420" y="292" class="lbl-mono">persist</text>
+              <path d="M560 268 V310" class="edge"/>
+              <path d="M578 310 V270" class="edge"/>
+              <text x="588" y="292" class="lbl-mono">XADD / XREAD 0</text>
+              <text x="56" y="392" class="lbl-mono">volume mongo_data · redis は TTL 1h の一時バス</text>
+            </svg>
+          </div>
+          <figcaption>朱の矢印が唯一の LLM 呼び出し経路。backend がホストの LM Studio へ直接届くため、LM Studio 側の CORS 設定は不要。</figcaption>
+        </figure>
+
+        <div class="prose">
+          <h3>切り離しの仕組み</h3>
+          <p><code>POST /api/tanka</code> は <code>task_id</code> だけを即座に返し、生成本体は <code>asyncio.create_task</code> で背景実行される。クライアントは <code>GET /api/tasks/{id}/stream</code> を購読するが、購読を切っても背景タスクは完走する。イベントは Redis Streams に積まれるため、再接続時は <code>XREAD … 0</code> で頭から再生できる。Pub/Sub ではなく Streams を選んだのはこの replay のため。</p>
+          <p>セッション切替で SSE だけを abort し、完了時は MongoDB に永続化。graceful shutdown は lifespan と <code>stop_grace_period: 30s</code> で partial save の時間を確保している。</p>
+        </div>
+
+        <div class="tbl x-scroll">
+          <table>
+            <thead><tr><th>サービス</th><th class="num">port</th><th>役割</th><th>なぜこの番号か</th></tr></thead>
+            <tbody>
+              <tr><td>frontend (Vite)</td><td class="num">5178</td><td>React 18 · <code>/api/*</code> を backend へ proxy</td><td>他プロジェクトが 5173 / 5176 を占有</td></tr>
+              <tr><td>backend (FastAPI)</td><td class="num">8001</td><td>ルート · タスク管理 · SSE · パイプライン</td><td>8000 は別プロジェクトが占有</td></tr>
+              <tr><td>mongo 8.2.12</td><td class="num">27017</td><td>sessions / tasks / failures</td><td>既定。8.0 系は Docker VM kernel 6.19+ で起動拒否のため pin</td></tr>
+              <tr><td>redis 7</td><td class="num">6379</td><td>タスクごとの Stream (TTL 1h, MAXLEN 10000)</td><td>既定</td></tr>
+              <tr><td>LM Studio (host)</td><td class="num">1234</td><td>OpenAI 互換 REST。<code>lms load … --context-length 32768</code> で明示ロード</td><td>Docker 外</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ─────────────────────────── 生成の流れ ─────────────────────────── -->
+      <section id="pipeline">
+        <p class="kicker">Pipeline</p>
+        <h2>生成の流れ</h2>
+        <p class="lead">Plan で季語と季節を決め、Compose で JSON を書かせ、Validate で採点し、不合格なら Refine へ戻す。各段を選ぶと、何を送り何が返るかを示す。</p>
+
+        <div class="stepper" id="stepper" role="group" aria-label="パイプラインの段階">
+          <button type="button" data-step="0" data-llm="1" aria-pressed="true"><span class="i">PLAN</span>構想</button>
+          <button type="button" data-step="1"><span class="i">INJECT</span>注入の準備</button>
+          <button type="button" data-step="2" data-llm="1"><span class="i">COMPOSE</span>作歌</button>
+          <button type="button" data-step="3" data-llm="1"><span class="i">SELF-CRITIQUE</span>自己点検</button>
+          <button type="button" data-step="4"><span class="i">VALIDATE</span>検証</button>
+          <button type="button" data-step="5"><span class="i">STOP?</span>停止判定</button>
+          <button type="button" data-step="6" data-llm="1"><span class="i">REFINE</span>改稿</button>
+          <button type="button" data-step="7"><span class="i">COMPLETE</span>採用</button>
+          <span class="loop">REFINE → VALIDATE → STOP? を、合格・plateau・上限のいずれかまで繰り返す</span>
+        </div>
+        <div class="step-detail" id="stepDetail" aria-live="polite"></div>
+
+        <h3>messages 配列の形 — system は静的、状態は user に流す</h3>
+        <div class="prose">
+          <p>LLM へ渡す配列は、役割定義の system プロンプト (定数、全 attempt で不変) と、動的な状態を積んだ user メッセージで構成される。critique も教訓も構想の制約も、すべて user 側に埋め込む。refine で送るのは <strong>固定ベース + 直近 1 ラウンドだけ</strong>で、attempt が増えても context は伸びない。</p>
+        </div>
+        <div class="seg" role="group" aria-label="表示する段階">
+          <button type="button" data-view="compose" aria-pressed="true">Compose (初稿)</button>
+          <button type="button" data-view="refine" aria-pressed="false">Refine (attempt n)</button>
+        </div>
+        <div class="msgs" id="msgs"></div>
+      </section>
+
+      <!-- ─────────────────────────── 検証器 ─────────────────────────── -->
+      <section id="validator">
+        <p class="kicker">Validator</p>
+        <h2>検証器 — 朱を入れるのは機械</h2>
+        <div class="prose">
+          <p><code>validator.py</code> は副作用のない純関数の集合で、DB も Redis も知らない。LLM の生出力から JSON を剥がして Pydantic <code>Tanka</code> にし、ルール関数を順に回して違反を集め、<strong>100 − Σ重み</strong> を score とする。読みはモデルの申告を信用せず、本文の漢字から pykakasi と古語読み辞書 (<code>kogo_yomi.json</code>) で独立に算出する。</p>
+          <p>ルールは 3 層。<code>Tanka</code> だけで判定できる 8 ルールは <code>RULES</code> リストに並び、関数を 1 つ書いて append すれば増える。構想との整合 2 ルールは Plan の値が要るため <code>evaluate()</code> の引数経由で注入。お題との整合 3 ルールは theme を受けて時刻語・主題語の矛盾と欠如を見る。全ルールに <code>LESSONS</code> の教訓文があることをテストが保証する。</p>
+        </div>
+
+        <div class="tbl x-scroll">
+          <table>
+            <thead><tr><th>ルール</th><th>重さ</th><th class="num">減点</th><th>何を見るか</th></tr></thead>
+            <tbody>
+              <tr><td colspan="4" class="small" style="background:var(--paper)">RULES — Tanka だけで判定</td></tr>
+              <tr><td><code>mora_count</code></td><td><span class="sev critical">critical</span></td><td class="num">−10</td><td>5-7-5-7-7 から ±2 以上ずれる句</td></tr>
+              <tr><td><code>mora_count_off_by_one</code></td><td><span class="sev minor">minor</span></td><td class="num">−3</td><td>字余り・字足らず ±1 (許容)</td></tr>
+              <tr><td><code>mora_count_disputed</code></td><td><span class="sev minor">minor</span></td><td class="num">−3</td><td>pykakasi 読みとモデル申告読みの拍数が食い違う (古典読みの可能性)</td></tr>
+              <tr><td><code>kigo_present</code></td><td><span class="sev critical">critical</span></td><td class="num">−25</td><td>宣言した季語が本文に無い</td></tr>
+              <tr><td><code>kigo_unique</code></td><td><span class="sev major">major</span></td><td class="num">−15</td><td>季語が本文に 2 回以上</td></tr>
+              <tr><td><code>kigo_in_dictionary</code></td><td><span class="sev minor">minor</span></td><td class="num">−5</td><td>226 語の歳時記辞書に無い季語</td></tr>
+              <tr><td><code>season_consistent</code></td><td><span class="sev major">major</span></td><td class="num">−20</td><td>宣言した季節が季語本来の季と違う</td></tr>
+              <tr><td><code>no_other_kigo_cross</code></td><td><span class="sev critical">critical</span></td><td class="num">−30</td><td>別の季の季語が混入 (季違い)。1 つで合格不能</td></tr>
+              <tr><td><code>no_other_kigo_same</code></td><td><span class="sev critical">critical</span></td><td class="num">−25</td><td>同じ季の別の季語が混入 (季重なり)。1 つで合格不能</td></tr>
+              <tr><td><code>repeated_word</code></td><td><span class="sev minor">minor</span></td><td class="num">−3</td><td>3 文字以上の目立つ重複表現</td></tr>
+              <tr><td><code>kireji_absent</code></td><td><span class="sev minor">minor</span></td><td class="num">−3</td><td>切れ字も体言止めも無い</td></tr>
+              <tr><td colspan="4" class="small" style="background:var(--paper)">PLAN-AWARE — evaluate() の引数で注入</td></tr>
+              <tr><td><code>season_matches_plan</code></td><td><span class="sev critical">critical</span></td><td class="num">−30</td><td>構想で決めた季節を変えた</td></tr>
+              <tr><td><code>kigo_matches_plan</code></td><td><span class="sev major">major</span></td><td class="num">−20</td><td>構想で決めた季語を変えた</td></tr>
+              <tr><td colspan="4" class="small" style="background:var(--paper)">THEME-AWARE — お題との整合</td></tr>
+              <tr><td><code>theme_time_mismatch</code></td><td><span class="sev critical">critical</span></td><td class="num">−25</td><td>「夕暮れ」のお題に朝の情景など、時刻の矛盾</td></tr>
+              <tr><td><code>theme_time_uncovered</code></td><td><span class="sev minor">minor</span></td><td class="num">−5</td><td>お題の時刻が本文のどこにも現れない (欠如)</td></tr>
+              <tr><td><code>theme_motif_uncovered</code></td><td><span class="sev minor">minor</span></td><td class="num">−5</td><td>お題の主題 (海辺・坂道 等) が本文に無い</td></tr>
+              <tr><td><code>schema_invalid</code></td><td><span class="sev critical">critical</span></td><td class="num">−100</td><td>JSON が壊れている / 必須項目欠落。score 0</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>減点シミュレータ</h3>
+        <p class="small">違反を選ぶと score がどう落ちるかを見る。重みは加法。critical 1 つで 80 を割るものがある一方、minor は 6 つ重ねても合格できる。</p>
+        <div class="sim">
+          <fieldset>
+            <legend>違反を選ぶ</legend>
+            <div class="rules" id="simRules"></div>
+          </fieldset>
+          <div class="gauge" aria-live="polite">
+            <div class="big num"><span id="simScore">100</span><small> / 100</small></div>
+            <div id="simBadge"><span class="badge pass">合格</span></div>
+            <div class="bar"><div class="fill" id="simFill" style="width:100%"></div><div class="thr"></div></div>
+            <div class="formula">score = max(0, 100 − Σ weight) &nbsp;·&nbsp; passed = score ≥ 80</div>
+            <div class="formula" id="simList">減点なし</div>
+            <button type="button" class="reset" id="simReset">選択を戻す</button>
+          </div>
+        </div>
+
+        <div class="prose">
+          <h3>停止条件</h3>
+          <ul>
+            <li><strong>合格</strong>: score ≥ 80 で即終了。その attempt を採用</li>
+            <li><strong>plateau</strong>: 直近 3 試行で best が更新されなければ打ち切り。過去最高の案を採用</li>
+            <li><strong>hard cap</strong>: attempt ≥ 50 (安全網、通常踏まない)</li>
+            <li><strong>llm_error</strong>: context 超過やタイムアウトなら best-so-far で打ち切り (zero-output を防ぐ)</li>
+          </ul>
+          <p>不合格の attempt は毎回 <code>failures</code> に記録され、次回以降の生成で教訓として注入される。合格しなかった歌もベストを返すが、UI では「規定未達」バッジが付く。</p>
+        </div>
+      </section>
+
+      <!-- ─────────────────────────── フィードバック設計 ─────────────────────────── -->
+      <section id="feedback">
+        <p class="kicker">Feedback design</p>
+        <h2>フィードバック設計 — コードを読むと誤解する 3 点</h2>
+        <p class="lead">引き継ぎで最初に読むべき <code>feedback-architecture.md</code> の要点。表面的に読むと逆に理解してしまう箇所がある。</p>
+
+        <div class="tbl x-scroll">
+          <table class="misread">
+            <thead><tr><th style="width:42%">よくある誤解</th><th>実態</th></tr></thead>
+            <tbody>
+              <tr><td>validator は出力を通すか落とすか判定する checker</td><td>数値・違反詳細・自然言語 critique・教訓フレーズを生成する<strong>フィードバック信号発生器</strong>。改稿の方向はここで決まる</td></tr>
+              <tr><td>失敗記憶は「悪い出力 + 修正版」の few-shot として LLM に見せている</td><td>見せていない。違反を <code>LESSONS</code> で <strong>1 行の教訓に圧縮</strong>し、user メッセージ末尾に箇条書きで埋め込む。raw の悪例は 8B が「お手本」と誤認するため</td></tr>
+              <tr><td>validator の結果は system プロンプトに反映される</td><td>されない。system は module-level 定数の参照が 3 箇所あるだけで<strong>一度も書き換えない</strong>。状態は user/assistant の交互で表現する</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="prose">
+          <h3>なぜ system を触らないか</h3>
+          <p>「あなたは歌人」と「前回 65 点だった」を混ぜると役割認識が揺れる。system を毎回書き換えると refine 履歴と二重に状態が累積して context を圧迫する。refine は本質的に「前の出力 + 指摘 → 次の出力」の対話であり、critique は user 発話として自然。実装も system は定数参照、user は append のみで済む。</p>
+          <h3>長期失敗記憶の実体と限界</h3>
+          <p>compose 直前に、<strong>同じモデル・同じ季</strong>の直近 3 件の失敗を <code>failures</code> から引き、最重要違反のルール名を教訓文に変換して注入する。モデル別に分けるのは、別モデルの癖で書かれた教訓が汚染するのを防ぐため。UI の「教訓」ブロックも注入と同じ関数から生成するので、見えているものと送ったものが一致する。</p>
+          <p>効果は正直に言って限定的。教訓は system の作法とほぼ同じ内容で新情報が少なく、修正例の対比も無い。実際の品質保証は validator のルール強制と refine ループが担い、長期記憶は補助輪に留まる。強化するなら「失敗 → 修正版」ペアの本物の few-shot 化や、悪例の断片併記が候補。</p>
+          <h3>context を attempt 数から独立させる</h3>
+          <p>かつては refine 履歴を積み上げ続け、attempt が増えると "Context size has been exceeded" で出力ゼロになった。いまは compose の固定ベースに直近 1 ラウンド (assistant の直近出力 + user の最新 critique) だけを足す。critique が毎回問題点を伝えるので過去全部は要らない。self-critique も同じ形。</p>
+        </div>
+      </section>
+
+      <!-- ─────────────────────────── 春アトラクター ─────────────────────────── -->
+      <section id="attractor">
+        <p class="kicker">Case study</p>
+        <h2>春アトラクター — 迷うと桜に落ちる</h2>
+        <div class="prose">
+          <p>お題「夏の夕暮れ」。構想は正しく <span class="season natsu"></span>夏 / 蛍 を選んだのに、最終出力は <span class="season haru"></span>春 / 花 の「花が散る」歌になり、47 点の不合格作が「完成」として採用された。結句「自然の理かな」は、compose プロンプト先頭の few-shot #1 (散る桜 / 春 / 花、emotion「自然の理への諦観」) からの直接コピーだった。</p>
+          <p>単発ではなかった。横断 52 件で plan の季と出力の季を突き合わせると、誤りは <strong>100% 春への一方通行</strong>。夏・秋・冬へ横滑りした例は 0 件。</p>
+        </div>
+
+        <div class="tbl x-scroll">
+          <table class="matrix">
+            <thead><tr><th>plan の季 ＼ 出力の季</th><th><span class="season haru"></span>春</th><th><span class="season natsu"></span>夏</th><th><span class="season aki"></span>秋</th><th><span class="season fuyu"></span>冬</th><th>正答率</th></tr></thead>
+            <tbody>
+              <tr><td><span class="season haru"></span>春</td><td class="c haru diag" style="--p:55%">10</td><td class="c zero">·</td><td class="c zero">·</td><td class="c zero">·</td><td class="c">10/10 = 100%</td></tr>
+              <tr><td><span class="season natsu"></span>夏</td><td class="c haru" style="--p:44%">8</td><td class="c diag">10</td><td class="c zero">·</td><td class="c zero">·</td><td class="c">10/18 = 56%</td></tr>
+              <tr><td><span class="season aki"></span>秋</td><td class="c haru" style="--p:22%">4</td><td class="c zero">·</td><td class="c diag">6</td><td class="c zero">·</td><td class="c">6/11 = 55%</td></tr>
+              <tr><td><span class="season fuyu"></span>冬</td><td class="c haru" style="--p:11%">2</td><td class="c zero">·</td><td class="c zero">·</td><td class="c diag">6</td><td class="c">6/8 = 75%</td></tr>
+              <tr><td>∅ (抽出失敗)</td><td class="c haru" style="--p:28%">5</td><td class="c zero">·</td><td class="c zero">·</td><td class="c zero">·</td><td class="c">0/5 = 0%</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small">非春 plan → 春: 14/37 (37%)。春 plan は一度も出ていかず、抽出に失敗した 5 件は全部春へ。写し元を指紋で当たると few-shot #1 が 4 件、#2〜#4 は 0 件。「季節の合う例を写す」のではなく「先頭の最も鮮烈な例に固着する」。</p>
+
+        <div class="prose">
+          <h3>対策: 動的 few-shot</h3>
+          <p>それまでの修正 (整合ルールの追加、plan の JSON 抽出) は全部「検出」側で、磁石そのものを断っていなかった。対策は compose に見せる few-shot を <strong>plan の季に一致する 1 ペアだけ</strong>にし、他季 (特に春) の例を隠すこと。同一 plan・同一制約で few-shot の OFF/ON だけを切り替える統制実験 (非春 4 題 × 3 反復、OFF/ON 隣接) を行った。</p>
+        </div>
+        <div class="ab">
+          <div><div class="lab">OFF · 四季全部を見せる (従来)</div><div class="val haru num">8 / 12</div><div class="sub">春へ転落 67%。夏の夕暮れ 3/3、紅葉の散る山道 2/3、名月を仰ぐ宵 2/3、冬の寂寥 1/3</div></div>
+          <div><div class="lab">ON · お題の季の 1 ペアだけ</div><div class="val ok num">0 / 12</div><div class="sub">春へ転落 0%。parse 失敗も増えず (24/24 成功)。「四季を揃えないと壊れる」という旧前提は否定された</div></div>
+        </div>
+        <p class="small"><code>TANKA_DYNAMIC_FEWSHOT=1</code> が既定。新年は専用ペアを別に持つ (新春・初春が春に隣接し、四季フォールバックに落ちると磁石が復活するため)。</p>
+      </section>
+
+      <!-- ─────────────────────────── 測定で分かったこと ─────────────────────────── -->
+      <section id="eval">
+        <p class="kicker">Measurement</p>
+        <h2>測定で分かったこと</h2>
+        <p class="lead">固定お題セットを機械的に回す評価ハーネス (<code>eval.sh</code> / <code>eval-repeat.sh</code> / <code>eval-paired.sh</code> / <code>compare.sh</code>) を作った途端、主観では見えなかったことが複数見えた。</p>
+
+        <div class="prose">
+          <h3>1. これは反復改善ではなく best-of-N サンプリング</h3>
+          <p>refine は前の歌を編集するのではなく、critique を見てゼロから別の歌を生成する。最終結果は全試行の最高点。同一お題「散りゆく桜」を 6 回生成すると、改稿回数とスコアは無相関だった。</p>
+        </div>
+        <figure>
+          <div class="fig">
+            <svg viewBox="0 0 640 160" role="img" aria-labelledby="var-title">
+              <title id="var-title">散りゆく桜 6 回生成のスコア分布。75 から 100、平均 89.0、標準偏差 9.6</title>
+              <line x1="40" y1="90" x2="600" y2="90" stroke="var(--rule)" stroke-width="1.2"/>
+              <g class="lbl-mono">
+                <text x="40" y="112" text-anchor="middle">0</text>
+                <text x="320" y="112" text-anchor="middle">50</text>
+                <text x="488" y="112" text-anchor="middle">80</text>
+                <text x="600" y="112" text-anchor="middle">100</text>
+              </g>
+              <line x1="488" y1="60" x2="488" y2="98" stroke="var(--take)" stroke-width="1.5" stroke-dasharray="4 3"/>
+              <text x="488" y="52" text-anchor="middle" class="lbl" fill="var(--take)">合格線 80</text>
+              <!-- dots: x = 40 + v*5.6 -->
+              <g>
+                <circle cx="460" cy="90" r="7" fill="var(--shu)"/>
+                <circle cx="488" cy="90" r="7" fill="var(--ink-2)"/>
+                <circle cx="544" cy="90" r="7" fill="var(--ink-2)"/>
+                <circle cx="566" cy="90" r="7" fill="var(--ink-2)"/>
+                <circle cx="572" cy="76" r="7" fill="var(--ink-2)"/>
+                <circle cx="600" cy="90" r="7" fill="var(--take)"/>
+                <text x="460" y="134" text-anchor="middle" class="lbl-mono">75 · 6回</text>
+                <text x="488" y="150" text-anchor="middle" class="lbl-mono">80 · 2回</text>
+                <text x="544" y="134" text-anchor="middle" class="lbl-mono">90 · 1回</text>
+                <text x="566" y="150" text-anchor="middle" class="lbl-mono">94 · 1回</text>
+                <text x="572" y="66" text-anchor="middle" class="lbl-mono">95 · 3回</text>
+                <text x="600" y="134" text-anchor="middle" class="lbl-mono">100 · 2回</text>
+              </g>
+              <text x="40" y="30" class="lbl">同一お題 ×6 (fresh reload 後): 90, 94, 80, 75, 95, 100 &nbsp;·&nbsp; mean 89.0 · stdev 9.6 · range 25</text>
+            </svg>
+          </div>
+          <figcaption>最多の 6 回改稿した run が最低 75 点、1 回で 90 点の run もある。「6 回 refine して 70」と「1 回で 97」は努力の差ではなく引きの差。</figcaption>
+        </figure>
+        <div class="tbl x-scroll">
+          <table>
+            <thead><tr><th>比較単位</th><th class="num">平均の標準誤差</th><th class="num">偶然生じうる差 (2SE)</th></tr></thead>
+            <tbody>
+              <tr><td>単一お題・単一 run</td><td class="num">±9.6</td><td class="num">±19</td></tr>
+              <tr><td>8 お題の平均</td><td class="num">±3.4</td><td class="num">±6.8</td></tr>
+              <tr><td>50 お題の平均</td><td class="num">±1.4</td><td class="num">±2.7</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small">8 お題 eval で ±6.8 以内の差はノイズ。以前「全項目改善 +2.86」と表示された比較は、このノイズ幅以下の運の差だったと確定した。以後、パイプライン変更の採否はノイズ幅を超える差だけで判断する。</p>
+
+        <div class="prose">
+          <h3>2. 素の実力と最終品質の順位が反転する</h3>
+          <p>同じ 12 題で 3 モデルを統制比較した。初稿で合格する率 (素の実力) は llm-jp が圧倒的だが、best-of-N の最終平均は最下位。一発の実力が最低の gpt-oss-20b が、refine に素直に応じ暴走しないため最高の平均に磨き上がる。</p>
+        </div>
+        <figure>
+          <div class="fig">
+            <svg viewBox="0 0 660 270" role="img" aria-labelledby="slope-title">
+              <title id="slope-title">3 モデルの初回合格率と最終平均スコアの傾き図。順位が反転する</title>
+              <text x="230" y="24" text-anchor="end" class="lbl">初回合格率 (素の実力)</text>
+              <text x="480" y="24" text-anchor="start" class="lbl">最終平均スコア (best-of-N)</text>
+              <line x1="230" y1="40" x2="230" y2="230" stroke="var(--rule)"/>
+              <line x1="480" y1="40" x2="480" y2="230" stroke="var(--rule)"/>
+              <!-- llm-jp: 75% -> 77.2 -->
+              <line x1="230" y1="85" x2="480" y2="155" stroke="var(--ink)" stroke-width="2.2"/>
+              <circle cx="230" cy="85" r="5" fill="var(--ink)"/><circle cx="480" cy="155" r="5" fill="var(--ink)"/>
+              <text x="218" y="89" text-anchor="end" class="lbl-mono" fill="var(--ink)">75%</text>
+              <text x="492" y="159" class="lbl-mono" fill="var(--ink)">77.2</text>
+              <text x="218" y="72" text-anchor="end" style="font-weight:600">llm-jp-4-8b-thinking</text>
+              <!-- gemma-3-27b: 42% -> 80.0 -->
+              <line x1="230" y1="144" x2="480" y2="130" stroke="var(--aki)" stroke-width="2.2"/>
+              <circle cx="230" cy="144" r="5" fill="var(--aki)"/><circle cx="480" cy="130" r="5" fill="var(--aki)"/>
+              <text x="218" y="148" text-anchor="end" class="lbl-mono" fill="var(--aki)">42%</text>
+              <text x="492" y="134" class="lbl-mono" fill="var(--aki)">80.0</text>
+              <text x="218" y="163" text-anchor="end" style="font-weight:600" fill="var(--aki)">gemma-3-27b</text>
+              <!-- gpt-oss-20b: 8% -> 84.5 -->
+              <line x1="230" y1="205" x2="480" y2="90" stroke="var(--natsu)" stroke-width="2.2"/>
+              <circle cx="230" cy="205" r="5" fill="var(--natsu)"/><circle cx="480" cy="90" r="5" fill="var(--natsu)"/>
+              <text x="218" y="209" text-anchor="end" class="lbl-mono" fill="var(--natsu)">8%</text>
+              <text x="492" y="94" class="lbl-mono" fill="var(--natsu)">84.5</text>
+              <text x="218" y="224" text-anchor="end" style="font-weight:600" fill="var(--natsu)">gpt-oss-20b</text>
+              <text x="355" y="256" text-anchor="middle" class="lbl-mono">n=12 (四季×3) · zero 率: llm-jp 17% / gemma 0% / gpt-oss 0% · 所要: 50 / 14 / 22 分</text>
+            </svg>
+          </div>
+          <figcaption>llm-jp は拍数違反 6 件・季語違反 1 件と正確だが、thinking 暴走で稀に 0 点。gemma は拍数違反 88 件と雑だが無事故で高速。gpt-oss の +7.3 は単一 run で後半低下があり、確認 run 推奨。</figcaption>
+        </figure>
+
+        <div class="prose">
+          <h3>3. self-critique の効果は結論不能 → paired 設計へ</h3>
+          <p>compose 後の自己点検フェーズ (+1 LLM call) を 16 題 × ON/OFF の blocked A/B で測ったところ、差 +4.69 はノイズ下限 ±4.8 の内側。しかも前半/後半に割ると ON 側の後半だけ LM Studio の持続負荷劣化で 62.0 点に沈み、前半だけなら符号が逆だった。環境劣化が交絡する不安定なハードでは blocked A/B は信用できない。</p>
+          <p>そこで現在、お題ごとに ON/OFF を ABBA で交互に走らせ、両 arm が同じ LM Studio 状態を経験する <strong>paired ハーネス</strong> (<code>eval-paired.sh</code>、per-request の <code>self_critique</code> 上書き、中断再開、事前登録の判定基準) を整備中。存続判断はその結果まで保留。</p>
+          <h3>4. 測定が見つけた本物のバグ</h3>
+          <p>手動テストでは踏まなかった 2 件が、固定お題を機械的に回して初めて顕在化した。refine 履歴の無限増加による context 超過と、timeout の無いストリームが stuck connection で 14 分黙ってブロックする問題。どちらも修正済みで、測定基盤の費用対効果の証拠になった。</p>
+        </div>
+      </section>
+
+      <!-- ─────────────────────────── 設計原則 ─────────────────────────── -->
+      <section id="principle">
+        <p class="kicker">Principle</p>
+        <h2>設計原則 — ツールに検証させ、モデルには反復させよ</h2>
+        <div class="prose">
+          <p>外部に決定的な検証器と refine ループを持つ設計では、モデル内部の自己検証 (thinking) は<strong>二重の無駄</strong>になる。validator が決定的・正確にやる仕事を、モデルが確率的・不正確に再実行し、捨てられる検証にトークンと時間を払う。さらに「5-7-5-7-7 を数えろ」のような制約は thinking モデルに拍数の再計算ループを誘発し、モデルは自分の出力文字列を観測できないため収束せず、予算を使い切って <code>&lt;/think&gt;</code> に到達しないまま空出力になる。この暴走は 8B でも 30B でも再現した。モデル非依存の病理で、規模では解決しない。</p>
+          <p>検証器とモデル内 thinking は補完財ではなく代替財。両方に金を払ってはいけない。</p>
+          <h3>系: モデル選定</h3>
+          <ul>
+            <li>ベンチマークの素の実力で選ばない。<strong>refine 応答性 × 壊滅事故の無さ</strong>で選ぶ</li>
+            <li>理想の型は非-thinking か、think を確実に閉じる thinking。分離 reasoning で閉じない型は構造的に不適合で、導入前のプローブで弾く</li>
+            <li>規模・世代・日本語特化は二次的</li>
+          </ul>
+          <h3>適用範囲の歯止め</h3>
+          <p>原則は「検証器がカバーする次元」でだけ成立する。拍数・季語・スキーマは機械判定できるので速い無事故モデルで足りる。詩情・余韻・自然さは validator が採点できず、素のモデル品質がそのまま出る。ここでは llm-jp の日本語特化 (名歌 90〜100 の産出力) が依然最強で、refine では埋められない。だから単一モデルに収束せず、<strong>llm-jp (質の天井) と閉じる系 (無事故・速度) をセッションごとに使い分ける</strong>のが現在の解。</p>
+        </div>
+        <div class="tbl x-scroll">
+          <table>
+            <thead><tr><th>領域</th><th>外部検証器</th><th>原則の含意</th></tr></thead>
+            <tbody>
+              <tr><td>コード生成</td><td>コンパイラ · 型検査 · テスト</td><td>速く書いてテストで直させる &gt; 遅い自己検証モデル</td></tr>
+              <tr><td>構造化抽出</td><td>スキーマ validator</td><td>non-thinking + リトライで十分なことが多い</td></tr>
+              <tr><td>短歌 (本件)</td><td>拍数 · 季語 validator</td><td>実証済み。素の実力順位と最終品質順位が反転した</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ─────────────────────────── 踏んだ罠 ─────────────────────────── -->
+      <section id="traps">
+        <p class="kicker">Pitfalls</p>
+        <h2>踏んだ罠と、戻してはいけない対策</h2>
+        <p class="lead">CLAUDE.md §6 に恒久記録されている再発防止策から、設計に影響の大きいものを抜粋。</p>
+        <ul class="traps">
+          <li><span class="when">2026-06</span><div><b>refine 履歴の無限増加で context 超過、出力ゼロ</b><span>会話履歴を全 attempt 積んでいた。</span> <span class="fix">→ 固定ベース + 直近 1 ラウンド。LLM エラー時は best-so-far。</span></div></li>
+          <li><span class="when">2026-06</span><div><b>ストリームのサイレントハング 14 分</b><span>timeout 無しで stuck connection が例外も出さず無限ブロック。</span> <span class="fix">→ チャンク間 read timeout 120 秒。thinking モデルは生成中ずっと出力するので無音はハング。</span></div></li>
+          <li><span class="when">2026-06</span><div><b>春アトラクター</b><span>四季の few-shot を全部見せても非春 plan の 37% が春へ。</span> <span class="fix">→ 動的 few-shot。四季全部を常時見せる実装に戻さない。</span></div></li>
+          <li><span class="when">2026-06</span><div><b>thinking 暴走で空出力</b><span>拍数の自己検証ループが <code>&lt;/think&gt;</code> に到達しない。</span> <span class="fix">→ completion 上限 8192。4096 は正常な長考まで切り、合格率 83→67% に悪化したため不採用。</span></div></li>
+          <li><span class="when">2026-06</span><div><b>LM Studio の JIT ロードは context 8192</b><span>未ロードモデルへの初回リクエストで小さい context で載り、全コールが超過した。</span> <span class="fix">→ 生成前に <code>lms ps</code> で確認し 32768 で明示ロード。</span></div></li>
+          <li><span class="when">2026-06</span><div><b>無人 eval がスリープと熱緊急で全滅</b><span>12 題中 9 題が read timeout の連鎖で失敗。pkill も相対パス起動に不一致でキューが生き残った。</span> <span class="fix">→ <code>caffeinate -dims</code> でラップ、日中実行、PID ファイルで停止。</span></div></li>
+          <li><span class="when">2026-08</span><div><b>思考表示が 1 ヶ月黙って壊れていた</b><span>LM Studio の更新で llm-jp の思考が content から reasoning_content に移り、答えは来るので誰も気づかなかった。</span> <span class="fix">→ llm 層が reasoning を harmony マーカー形式に合流。content 空のときだけ reasoning 末尾から JSON を救済。</span></div></li>
+          <li><span class="when">2026-08</span><div><b>auto-title が明示タイトルを潰す</b><span>eval run の識別名が最初の user メッセージで上書きされた。</span> <span class="fix">→ 現タイトルが既定値のときだけ自動命名。</span></div></li>
+          <li><span class="when">2026-09</span><div><b>mongo:8.0 が Docker VM kernel 6.19+ で起動拒否</b><span>Docker Desktop 更新でスタック全体が起動不能。8.0 系最新でも同じ。</span> <span class="fix">→ mongo:8.2.12 に pin、FCV は 8.0 のまま。スタックが上がらないときはコードより先にインフラ層を疑う。</span></div></li>
+        </ul>
+      </section>
+
+      <!-- ─────────────────────────── 地図と数字 ─────────────────────────── -->
+      <section id="map">
+        <p class="kicker">Map</p>
+        <h2>地図と数字</h2>
+        <p class="lead">依存は一方向。葉モジュールは何も import せず、<code>tanka.py</code> は「いつ何を呼ぶか」だけを持つ。</p>
+
+        <div class="layers">
+          <div class="layer"><div class="lname">HTTP / 実行</div><div class="mods"><span class="mod">main.py</span><span class="mod">tasks.py</span></div></div>
+          <div class="layer-arrow">↓</div>
+          <div class="layer"><div class="lname">オーケストレーション</div><div class="mods"><span class="mod ai">tanka.py</span></div></div>
+          <div class="layer-arrow">↓</div>
+          <div class="layer"><div class="lname">中間層</div><div class="mods"><span class="mod">llm.py</span><span class="mod hot">validator.py</span><span class="mod">rag.py</span></div></div>
+          <div class="layer-arrow">↓</div>
+          <div class="layer"><div class="lname">葉 (依存なし)</div><div class="mods"><span class="mod">reading.py</span><span class="mod">config.py</span><span class="mod">prompts.py</span><span class="mod">db.py</span><span class="mod">bus.py</span></div></div>
+          <div class="layer-arrow">↓</div>
+          <div class="layer"><div class="lname">データ (版管理)</div><div class="mods"><span class="mod">kigo.json</span><span class="mod">classical_tanka.json</span><span class="mod">kogo_yomi.json</span></div></div>
+        </div>
+
+        <div class="tbl x-scroll">
+          <table>
+            <thead><tr><th>ファイル</th><th>責務</th><th>触る頻度</th></tr></thead>
+            <tbody>
+              <tr><td><code>main.py</code></td><td>FastAPI ルートのみ。ロジックは書かない</td><td>エンドポイント追加時</td></tr>
+              <tr><td><code>tasks.py</code></td><td>asyncio Task の lifecycle、Redis へ emit、DB 永続化、失敗記録</td><td>新タスク種別追加時</td></tr>
+              <tr><td><code>tanka.py</code></td><td>Plan → Compose → Validate → Refine の流れ。DB は遅延 import で最小限</td><td>パイプライン構造変更時</td></tr>
+              <tr><td><code>llm.py</code></td><td>LM Studio 通信、timeout、harmony 分離、reasoning 合流、JSON 救済</td><td>LLM 層変更時</td></tr>
+              <tr><td><code>prompts.py</code></td><td>system プロンプト、few-shot、messages 組み立て (純関数)</td><td>プロンプト調整時</td></tr>
+              <tr><td><code>validator.py</code></td><td>Pydantic Tanka、ルール、スコア、critique、LESSONS</td><td>ルール追加時</td></tr>
+              <tr><td><code>reading.py</code></td><td>漢字 → ひらがな、拍数。古語読み override を pykakasi の前段に</td><td>ほぼ触らない</td></tr>
+              <tr><td><code>rag.py</code></td><td>古典 31 首から季語 exact → 同季 → 雑 の構造検索 (embedding 不使用)</td><td>コーパス変更時</td></tr>
+              <tr><td><code>db.py</code> / <code>bus.py</code></td><td>MongoDB CRUD / Redis Streams。副作用の唯一の境界</td><td>スキーマ・ブローカ変更時</td></tr>
+              <tr><td><code>frontend/src/App.jsx</code></td><td>サイドバー、ストリーミング表示、検証パネル、失敗履歴、モデル切替、評価モニタ</td><td>UI 変更時</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="stats">
+          <div class="stat"><div class="v num">226</div><div class="l">季語 (春 49 · 夏 54 · 秋 52 · 冬 52 · 新年 21)</div></div>
+          <div class="stat"><div class="v num">31</div><div class="l">古典短歌コーパス (古今集・新古今集ほか、PD)</div></div>
+          <div class="stat"><div class="v num">162</div><div class="l">pytest ケース (validator · prompts · reading · rag · tasks ほか)</div></div>
+          <div class="stat"><div class="v num">17</div><div class="l">validator ルール (RULES 11 + plan 整合 2 + お題整合 3 + schema)</div></div>
+        </div>
+
+        <h3>起動と確認</h3>
+        <pre><code># ホストで LM Studio を明示ロード (JIT の context 8192 を避ける)
+lms load llm-jp-4-8b-thinking --context-length 32768
+
+./app/start.sh                        # 4 サービス起動、port 衝突は lsof で fail-fast
+curl http://localhost:8001/api/health # status: ok
+open http://localhost:5178
+
+cd app/backend &amp;&amp; uv run pytest -q   # LLM/DB 不要の単体テスト
+cd app/backend/eval &amp;&amp; ./eval.sh &lt;variant&gt; &amp;&amp; ./compare.sh &lt;before&gt; &lt;after&gt;</code></pre>
+      </section>
+
+      <footer>
+        <div>出典: <code>CLAUDE.md</code> · <code>app/docs/architecture.md</code> · <code>app/docs/feedback-architecture.md</code> · <code>app/docs/design-principle-verifier-in-the-loop.md</code> · <code>app/docs/season-drift-spring-attractor/README.md</code> · <code>app/docs/model-characteristics.md</code> · <code>app/backend/eval/FINDINGS.md</code> · 実装 (<code>tanka.py</code> / <code>validator.py</code> / <code>prompts.py</code> / <code>config.py</code>)。ヒーローの歌は 2026-09-05 のスモークテストで実際に生成されたもの。</div>
+        <div style="margin-top:.4rem">数値は各ドキュメント記載の測定値をそのまま転記。平均スコアの差は §測定 のノイズ幅を超えるものだけを差として読むこと。</div>
+      </footer>
+    </div>
+  </main>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ── 配色トグル (data-theme が media query に勝つ) ── */
+  var root = document.documentElement;
+  var btn = document.getElementById('themeBtn');
+  var order = ['auto', 'light', 'dark'];
+  var label = { auto: '配色: 自動', light: '配色: 明', dark: '配色: 暗' };
+  function applyTheme(t) {
+    if (t === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', t);
+    if (btn) btn.textContent = label[t];
+  }
+  var saved = 'auto';
+  try { saved = localStorage.getItem('tanka-overview-theme') || 'auto'; } catch (e) {}
+  if (order.indexOf(saved) < 0) saved = 'auto';
+  applyTheme(saved);
+  if (btn) btn.addEventListener('click', function () {
+    var cur = root.getAttribute('data-theme') || 'auto';
+    var next = order[(order.indexOf(cur) + 1) % order.length];
+    applyTheme(next);
+    try { localStorage.setItem('tanka-overview-theme', next); } catch (e) {}
+  });
+
+  /* ── 目次の現在位置 ── */
+  var links = Array.prototype.slice.call(document.querySelectorAll('#toc a'));
+  var targets = links.map(function (a) { return document.querySelector(a.getAttribute('href')); }).filter(Boolean);
+  if ('IntersectionObserver' in window && targets.length) {
+    var visible = {};
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) { visible[en.target.id] = en.isIntersecting ? en.intersectionRatio : 0; });
+      var best = null, bestR = 0;
+      targets.forEach(function (t) { if ((visible[t.id] || 0) > bestR) { bestR = visible[t.id]; best = t.id; } });
+      if (!best) return;
+      links.forEach(function (a) { a.setAttribute('aria-current', a.getAttribute('href') === '#' + best ? 'true' : 'false'); });
+    }, { rootMargin: '-20% 0px -60% 0px', threshold: [0, .1, .25, .5] });
+    targets.forEach(function (t) { io.observe(t); });
+  }
+
+  /* ── パイプライン stepper ── */
+  var STEPS = [
+    { title: '構想 (Plan)', llm: true,
+      body: 'お題から「季語・季節・情景・心情」だけを自由文で書かせる。短歌本体はまだ書かせない。返ってきた構想から正規表現で season_hint / kigo_hint を抽出し、以後の整合チェックの基準にする。手動構想モードでは人間の入力で LLM Plan を差し替える。',
+      facts: [['送るもの', 'system (静的) + user「お題: 初秋の風 … 構想だけを出力」'], ['返るもの', '季語: 雁 / 季節: 秋 / 情景 / 心情'], ['SSE', 'phase_start → chunk* → phase_end (duration_seconds 付き)'], ['所要 (実例)', '9.6 秒']] },
+    { title: '注入の準備 (LLM を呼ばない)', llm: false,
+      body: 'compose の user メッセージに足す 4 種のブロックを組み立てる。長期失敗記憶は failures から同モデル・同季の直近 3 件を引いて教訓 1 行ずつに。RAG は古典 31 首から季語 exact → 同季 → 雑の順で 2 首。plan_constraint は「kigo は必ず "雁" / season は必ず "秋"」の強調文。few-shot は plan の季に一致する 1 ペアだけを選ぶ。',
+      facts: [['長期失敗記憶', 'recent_failures(season, model, limit=3) → LESSONS で教訓化'], ['RAG', 'rag.retrieve(season, kigo) · 模倣禁止をプロンプトで明示 · TANKA_RAG=1'], ['動的 few-shot', 'select_few_shot(season_hint) · TANKA_DYNAMIC_FEWSHOT=1'], ['SSE', 'lessons (entries[]) · rag (examples[]) — 注入が無ければ流れない']] },
+    { title: '作歌 (Compose)', llm: true,
+      body: 'system + few-shot 1 ペア + user (お題・構想・制約・RAG・教訓) を送り、JSON の初稿を得る。この messages 配列が以後の「固定ベース」になり、self-critique と refine はここに直近 1 ラウンドだけを足す。',
+      facts: [['送るもの', 'prompts.build_compose_messages(...) — 下の messages 配列を参照'], ['返るもの', '{kigo, season, lines[5]{body, reading}, image, emotion}'], ['上限', 'max_tokens 8192 (暴走思考の打ち切り。切られた出力は schema_invalid として回収)'], ['所要 (実例)', '36.8 秒']] },
+    { title: '自己点検 (Self-critique)', llm: true,
+      body: '初稿に対して 5 観点 (季語の唯一出現・季違い・拍数・構想維持・切れ字) の自己点検を求め、修正版か同一 JSON を返させる。失敗しても初稿で続行する非致命フェーズ。効果は blocked A/B で結論不能だったため、paired 再測定の結果まで存続判断を保留している。',
+      facts: [['送るもの', 'compose_messages + [assistant: 初稿, user: SELF_CRITIQUE_USER]'], ['切替', 'TANKA_SELF_CRITIQUE=1 (既定 ON) · eval は per-request の self_critique で上書き'], ['所要 (実例)', '110.3 秒 (フェーズ中最長)'], ['SSE', 'phase_start/chunk/phase_end (phase="self_critique")']] },
+    { title: '検証 (Validate)', llm: false,
+      body: 'parse_tanka_json で code fence や前後の散文を剥がして Pydantic に通し、ルールを回して違反を集める。score = 100 − Σ重み。critique (前回の評点・最重要違反の箇条書き) と failure_summary (短期履歴用 1 行) も同時に整形する。不合格なら failures に記録。',
+      facts: [['評価', 'validator.evaluate(t, expected_season, expected_kigo, theme)'], ['読み', 'モデル申告を信用せず kanji_to_hira + count_moras で独立算出'], ['SSE', 'validation {attempt, score, violations[], parsed_tanka, resolved}'], ['副作用', 'validator は持たない。tasks.py が db.record_failure を呼ぶ']] },
+    { title: '停止判定', llm: false,
+      body: '合格 (≥80) なら即終了。そうでなければ plateau (直近 3 試行で best 更新なし)、hard cap (50)、LLM エラーを順に見る。どの打ち切りでも全試行の最高点の案を最終結果にする。固定回数で切らないのは、簡単なお題は 1 回、難しいお題は何度でも試せるようにするため。',
+      facts: [['合格', 'score ≥ PASS_THRESHOLD (80)'], ['plateau', 'max(history[-3:]) ≤ max(history[:-3]) → plateau_reached'], ['cap', 'attempt ≥ HARD_CAP (50) → max_refines_reached'], ['エラー', 'context 超過 / timeout → llm_error {recovered} で best-so-far']] },
+    { title: '改稿 (Refine)', llm: true,
+      body: 'critique と短期失敗履歴 (この生成内で起きた違反の 1 行要約) を user メッセージにして再生成を求める。前の歌を編集するのではなく、指摘を見てゼロから別の歌を生成するため、実態は反復改善ではなく validator 誘導の best-of-N サンプリング。',
+      facts: [['送るもの', 'compose_messages + [assistant: 直近出力, user: critique + 【過去の試行で起きた違反】]'], ['context', '固定ベース + 直近 1 ラウンド。attempt 数に依存しない'], ['SSE', 'phase_start/chunk/phase_end (phase="refine", attempt=n)'], ['戻り先', '検証 (Validate) へ']] },
+    { title: '採用 (Complete)', llm: false,
+      body: '最終案の本文・拍数・季語・季節・情景・心情・score・model を complete イベントで流し、done で全体所要秒を付けて閉じる。tasks.py が sessions に tanka メッセージとして永続化し、各フェーズの raw (思考込み) も再生用に保存する。',
+      facts: [['SSE', 'complete {tanka, moras[], kigo, season, image, emotion, score, model} → done {duration_seconds}'], ['永続化', 'sessions.messages に kind="tanka" (validations[], score_history, phases[])'], ['UI', '規定未達 (score < 80) はバッジ表示。所要 ⏱ は done で後付け'], ['実例', '「初秋の風」97 点、1 attempt、156.7 秒']] }
+  ];
+  var stepper = document.getElementById('stepper');
+  var detail = document.getElementById('stepDetail');
+  var stepBtns = Array.prototype.slice.call(stepper.querySelectorAll('button[data-step]'));
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function renderStep(i) {
+    var s = STEPS[i];
+    stepBtns.forEach(function (b, j) { b.setAttribute('aria-pressed', j === i ? 'true' : 'false'); });
+    var facts = s.facts.map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('');
+    detail.innerHTML =
+      '<div><h3>' + esc(s.title) + (s.llm ? ' <span class="badge" style="color:var(--shu);vertical-align:middle">LLM 呼び出し</span>' : ' <span class="badge minor" style="vertical-align:middle">ローカル処理</span>') + '</h3><p>' + esc(s.body) + '</p></div>' +
+      '<dl class="facts">' + facts + '</dl>';
+  }
+  stepBtns.forEach(function (b) {
+    b.addEventListener('click', function () { renderStep(parseInt(b.getAttribute('data-step'), 10)); });
+    b.addEventListener('keydown', function (e) {
+      var i = parseInt(b.getAttribute('data-step'), 10);
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); var n = stepBtns[(i + 1) % stepBtns.length]; n.focus(); renderStep((i + 1) % stepBtns.length); }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); var p = stepBtns[(i - 1 + stepBtns.length) % stepBtns.length]; p.focus(); renderStep((i - 1 + stepBtns.length) % stepBtns.length); }
+    });
+  });
+  renderStep(0);
+
+  /* ── messages 配列 ── */
+  var MSG_BASE = [
+    { role: 'system', cls: 'system', text: 'TANKA_SYSTEM_PROMPT — 「あなたは熟練した歌人です…」作法・思考の順序・JSON スキーマ・検証の仕組み', note: '定数。全 attempt で不変。critique は絶対にここへ流さない' },
+    { role: 'user', cls: '', text: 'few-shot: お題「秋風」+ 構想', note: 'plan の季に一致する 1 ペアだけ (動的 few-shot)' },
+    { role: 'assistant', cls: '', text: 'few-shot: {"kigo":"秋風","season":"秋","lines":[…藤原敏行「秋来ぬと…」]}', note: '正例。古典の名歌 (PD)' },
+    { role: 'user', cls: 'dyn', text: 'お題: 初秋の風 / 構想: 季語 雁 · 季節 秋 · 情景 · 心情\n【重要・必須】kigo は必ず "雁" / season は必ず "秋"\n【参考: 古典作例 2 首 — 剽窃するな】\n【長期失敗記憶 — 教訓 3 件】\n【過去の試行で起きた違反 (短期)】\nJSON 形式で短歌を出力してください', note: '動的。毎 attempt で組み立て直す。validator の出力はすべてここへ' }
+  ];
+  var MSG_ROUND = [
+    { role: 'assistant', cls: 'round', text: '直近の出力 JSON (attempt n−1)', note: '直近 1 件だけ。それ以前の試行は捨てる' },
+    { role: 'user', cls: 'round', text: '前回の評点: 65/100 (合格ライン: 80)\n**最も重要な違反**:\n  ✗ [-30 / critical] 構想で決めた季節「秋」と出力の season「春」が一致しません\n  ✗ [-15 / major] 季語「雁」が本文に 2 回\n…JSON 形式で再出力してください\n【過去の試行で起きた違反】試行 1: score=65, 違反: …', note: 'validator.format_critique の出力。system ではなく user として送る' }
+  ];
+  var msgs = document.getElementById('msgs');
+  var segBtns = Array.prototype.slice.call(document.querySelectorAll('.seg button[data-view]'));
+  function msgHTML(m) {
+    return '<div class="msg ' + m.cls + '"><span class="role">' + esc(m.role) + '</span><span>' + esc(m.text).replace(/\n/g, '<br>') + '<span class="note">' + esc(m.note) + '</span></span></div>';
+  }
+  function renderMsgs(view) {
+    segBtns.forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-view') === view ? 'true' : 'false'); });
+    var html = '<div class="msg-brace">固定ベース (compose_messages) — attempt に依らず同一</div>' + MSG_BASE.map(msgHTML).join('');
+    if (view === 'refine') html += '<div class="msg-brace">+ 直近 1 ラウンドのみ</div>' + MSG_ROUND.map(msgHTML).join('');
+    else html += '<div class="msg-brace">→ assistant が初稿 JSON を返す</div>';
+    msgs.innerHTML = html;
+  }
+  segBtns.forEach(function (b) { b.addEventListener('click', function () { renderMsgs(b.getAttribute('data-view')); }); });
+  renderMsgs('compose');
+
+  /* ── 減点シミュレータ ── */
+  var RULE_GROUPS = [
+    ['RULES', [
+      ['mora_count', 10, 'critical'], ['mora_count_off_by_one', 3, 'minor'], ['mora_count_disputed', 3, 'minor'],
+      ['kigo_present', 25, 'critical'], ['kigo_unique', 15, 'major'], ['kigo_in_dictionary', 5, 'minor'],
+      ['season_consistent', 20, 'major'], ['no_other_kigo_cross', 30, 'critical'], ['no_other_kigo_same', 25, 'critical'],
+      ['repeated_word', 3, 'minor'], ['kireji_absent', 3, 'minor']
+    ]],
+    ['PLAN-AWARE', [['season_matches_plan', 30, 'critical'], ['kigo_matches_plan', 20, 'major']]],
+    ['THEME-AWARE', [['theme_time_mismatch', 25, 'critical'], ['theme_time_uncovered', 5, 'minor'], ['theme_motif_uncovered', 5, 'minor']]]
+  ];
+  var rulesEl = document.getElementById('simRules');
+  var html = '';
+  RULE_GROUPS.forEach(function (g) {
+    html += '<div class="group">' + g[0] + '</div>';
+    g[1].forEach(function (r) {
+      html += '<label><input type="checkbox" data-w="' + r[1] + '" data-r="' + r[0] + '"><span class="w">−' + r[1] + '</span><span class="r">' + r[0] + '</span></label>';
+    });
+  });
+  rulesEl.innerHTML = html;
+  var boxes = Array.prototype.slice.call(rulesEl.querySelectorAll('input'));
+  var scoreEl = document.getElementById('simScore'), badgeEl = document.getElementById('simBadge'),
+      fillEl = document.getElementById('simFill'), listEl = document.getElementById('simList');
+  function simUpdate() {
+    var sum = 0, names = [];
+    boxes.forEach(function (b) { if (b.checked) { sum += parseInt(b.getAttribute('data-w'), 10); names.push(b.getAttribute('data-r')); } });
+    var score = Math.max(0, 100 - sum);
+    scoreEl.textContent = score;
+    var pass = score >= 80;
+    badgeEl.innerHTML = pass ? '<span class="badge pass">合格 — refine 終了</span>' : '<span class="badge fail">不合格 — critique を返して改稿</span>';
+    fillEl.style.width = score + '%';
+    fillEl.className = 'fill' + (pass ? '' : ' fail');
+    listEl.textContent = names.length ? '100 − (' + names.join(' + ') + ') = ' + score : '減点なし';
+  }
+  boxes.forEach(function (b) { b.addEventListener('change', simUpdate); });
+  document.getElementById('simReset').addEventListener('click', function () { boxes.forEach(function (b) { b.checked = false; }); simUpdate(); });
+  simUpdate();
+})();
+</script>
+</body>
+</html>
