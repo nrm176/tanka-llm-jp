@@ -166,6 +166,11 @@ validator / reading が fail-loud で起動を止める (silent degrade しな�
   合わせて読みを捏造 57%** (五月雨→ごがつあめ、霜→ふゆ、本文のかなすら写せていないもの 15 件)。
   規定を知るモデルの読み欄は自己申告であり Goodhart 化する。**override の追加で disputed 率は下がらない**
   (1 割が上限)。分類表は `app/backend/eval/experiments/self-critique-paired/disputed-curation.md`
+- 【#76/#77】対策として救済条件を絞った (`validator._reading_plausible`: かな部分の整合 + 食い違い 1 箇所以下)。
+  巻き添え 0 で捏造の 47% を弾く。**点数はほぼ変わらない** (run 2 再採点で best-of-N 変更 0/100) — 価値は指標の
+  意味回復。FINDINGS §5.8。**無条件救済に戻さないこと** (対照 arm 用の per-request `strict_disputed=false` を除く)
+- 【追記 09-18】生成 paired A/B (50 題、§5.8.1) で **critique の文言ではモデルは本文を直さない**と確定 (逸脱句数
+  Δ +0.06、2SE 0.33)。読み欄の捏造への次の手はプロンプト側 (読み欄の廃止 or 先行記述) で、critique の書き換えではない
 
 ### 6.4 8B モデルの指示追従の弱さ
 - **Plan で決めた季節/季語を Compose で勝手に変える**現象がよく起きる

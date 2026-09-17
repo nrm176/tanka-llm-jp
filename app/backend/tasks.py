@@ -260,7 +260,8 @@ def tanka_result_from_state(state: dict[str, Any]) -> dict[str, Any] | None:
 
 async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int,
                      model: str | None = None, manual_plan: dict | None = None,
-                     self_critique: bool | None = None) -> None:
+                     self_critique: bool | None = None,
+                     strict_disputed: bool | None = None) -> None:
     """tanka:お題 のユーザーメッセージは既に DB に書かれている前提。
     パイプライン実行 → 完成短歌を DB に保存。"""
     log.info("tanka task started: task=%s theme=%s", task_id, theme)
@@ -289,7 +290,7 @@ async def _run_tanka(task_id: str, session_id: str, theme: str, max_refines: int
     }
     try:
         async for event in tanka.generate_tanka_pipeline(theme, max_refines=max_refines, model=model, manual_plan=manual_plan,
-                                                           self_critique=self_critique):
+                                                           self_critique=self_critique, strict_disputed=strict_disputed):
             etype = event.get("type")
             apply_event_to_state(final_state, event)
 
@@ -401,10 +402,11 @@ def start_plan(task_id: str, session_id: str, theme: str, *, kigo: str | None = 
 
 def start_tanka(task_id: str, session_id: str, theme: str, max_refines: int,
                 model: str | None = None, manual_plan: dict | None = None,
-                self_critique: bool | None = None) -> asyncio.Task:
+                self_critique: bool | None = None,
+                     strict_disputed: bool | None = None) -> asyncio.Task:
     """model はセッション実効モデル (#20)。main.py がタスク作成時に解決して渡す。
     manual_plan を渡すと LLM Plan フェーズをスキップする (手動構想モード)。
     self_critique は per-request 上書き (eval 用、None なら config に従う)。"""
     return _register(task_id, _run_tanka(task_id, session_id, theme, max_refines,
                                          model=model, manual_plan=manual_plan,
-                                         self_critique=self_critique))
+                                         self_critique=self_critique, strict_disputed=strict_disputed))

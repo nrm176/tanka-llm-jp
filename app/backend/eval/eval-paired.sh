@@ -133,9 +133,9 @@ ms = [m for m in json.load(sys.stdin).get('messages', []) if m.get('kind') == 't
 print(ms[-1].get('final_score') if ms else '')
 " "$2")
   if [ -n "$got" ]; then
-    echo "    $4: done ($((SECONDS - t0))s, score $got)"
+    echo "    $(date '+%H:%M:%S') $4: done ($((SECONDS - t0))s, score $got)"
   else
-    echo "    $4: NO RESULT after $((SECONDS - t0))s — task failed or backend restarted mid-run (再開: RESUME_A/RESUME_B で再実行される)"
+    echo "    $(date '+%H:%M:%S') $4: NO RESULT after $((SECONDS - t0))s — task failed or backend restarted mid-run (再開: RESUME_A/RESUME_B で再実行される)"
   fi
 }
 
@@ -144,7 +144,7 @@ for line in "${THEME_LINES[@]}"; do
   i=$((i + 1))
   tid_label="${line%%$'\t'*}"; theme="${line#*$'\t'}"
   # cut -c はバイト単位で切るため日本語が壊れる (ログが不正 UTF-8 になり後処理が落ちた) → 文字単位で切る
-  printf "[%2d/%2d] %-8s %s\n" "$i" "$N" "$tid_label" "$(py "import sys; print(sys.argv[1][:40])" "$theme")"
+  printf "%s [%2d/%2d] %-8s %s\n" "$(date '+%H:%M:%S')" "$i" "$N" "$tid_label" "$(py "import sys; print(sys.argv[1][:40])" "$theme")"
   need_a=1; need_b=1
   grep -qxF "$theme" <<<"$DONE_A" && need_a=0
   grep -qxF "$theme" <<<"$DONE_B" && need_b=0

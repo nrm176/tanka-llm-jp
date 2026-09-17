@@ -197,8 +197,10 @@ def test_run_tanka_threads_self_critique_override_to_pipeline(monkeypatch):
 
     captured = {}
 
-    async def fake_pipeline(theme, max_refines=None, model=None, manual_plan=None, self_critique=None):
+    async def fake_pipeline(theme, max_refines=None, model=None, manual_plan=None, self_critique=None,
+                            strict_disputed=None):
         captured["self_critique"] = self_critique
+        captured["strict_disputed"] = strict_disputed
         yield {"type": "complete", "tanka": "a\nb\nc\nd\ne", "plan": "p", "moras": [5, 7, 5, 7, 7],
                "kigo": "蛍", "season": "夏", "image": "i", "emotion": "e", "score": 90, "model": model}
 
@@ -211,7 +213,8 @@ def test_run_tanka_threads_self_critique_override_to_pipeline(monkeypatch):
     monkeypatch.setattr(tasks.q, "add_event", noop_async)
     monkeypatch.setattr(tasks.q, "expire_stream", noop_async)
 
-    asyncio.run(tasks._run_tanka("t1", "s1", "夏", None, model="m", self_critique=False))
+    asyncio.run(tasks._run_tanka("t1", "s1", "夏", None, model="m", self_critique=False, strict_disputed=False))
     assert captured["self_critique"] is False
+    assert captured["strict_disputed"] is False  # #76 の対照 arm 用フラグも同じ経路で届く
     asyncio.run(tasks._run_tanka("t2", "s1", "夏", None, model="m"))
     assert captured["self_critique"] is None  # 未指定 = 従来どおり config に従う

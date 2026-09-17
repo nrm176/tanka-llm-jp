@@ -182,7 +182,7 @@ def _lessons_event(entries: list[dict]) -> dict[str, Any]:
 
 
 def _score_one(validator, composition: str, season_hint: str | None, kigo_hint: str | None,
-               theme: str) -> dict[str, Any]:
+               theme: str, strict_disputed: bool = True) -> dict[str, Any]:
     """1 つの出力を検証して、validation イベントに必要な要素を dict で返す。"""
     meta: dict[str, Any] = {}
     parsed = validator.parse_tanka_json(composition, meta=meta)
@@ -197,7 +197,8 @@ def _score_one(validator, composition: str, season_hint: str | None, kigo_hint: 
             "critique": validator.format_schema_critique(err_msg),
             "failure_summary": f"score=0, schema_invalid: {err_msg}",
         }
-    result = validator.evaluate(parsed, expected_season=season_hint, expected_kigo=kigo_hint, theme=theme)
+    result = validator.evaluate(parsed, expected_season=season_hint, expected_kigo=kigo_hint, theme=theme,
+                                strict_disputed=strict_disputed)
     return {
         "tanka_obj": parsed, "score": result.score, "json_repaired": repaired, "key_typo": key_typo,
         "errors": result.errors, "warnings": result.warnings,
@@ -288,7 +289,8 @@ async def plan_draft_stream(theme: str, *, kigo: str | None = None, season: str 
 async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
                                   model: str | None = None,
                                   manual_plan: dict | None = None,
-                                  self_critique: bool | None = None) -> AsyncIterator[dict[str, Any]]:
+                                  self_critique: bool | None = None,
+                                  strict_disputed: bool | None = None) -> AsyncIterator[dict[str, Any]]:
     """短歌生成パイプライン。改善が続く限り refine し、全 attempt の最高 score を最終結果に採用する。
     manual_plan を渡すと LLM Plan フェーズをスキップし、人間が立てた構想 (季語/季節/情景/心情) を
     そのまま compose に流す (手動構想モード)。"""
@@ -356,6 +358,9 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
         yield ev
 
     # ── self-critique (Phase 1 B4, 任意。失敗しても初稿で続行) ──
+    # mora_count_disputed の救済条件 (#76) の per-request 上書き (eval 用)。None なら厳格 (既定)
+    strict = True if strict_disputed is None else strict_disputed
+
     # self_critique の per-request 上書き (eval 用)。None なら env 設定に従う = 従来挙動と同一
     if config.SELF_CRITIQUE_ENABLED if self_critique is None else self_critique:
         sc_messages = compose_messages + [
@@ -379,7 +384,7 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
     attempt = 0
 
     while True:
-        r = _score_one(validator, composition, season_hint, kigo_hint, theme)
+        r = _score_one(validator, composition, season_hint, kigo_hint, theme, strict_disputed=strict)
         score = r["score"]
         score_history.append(score)
         if r["tanka_obj"] is not None and score > best_score:
