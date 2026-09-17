@@ -44,6 +44,11 @@ run 2 (self-critique paired、50 題 × 2 arm) の最終短歌 100 首のうち 
    救済し、本文のかな部分を写せていない・編集距離が大きい読みは救済しない (= 通常の拍数違反に落とす)。
    スコア尺度が変わるので、採用は共通重み再採点 (skill Step 1 特例) で効果確認してから。→ Issue 化
 
+## 後続 (#76)
+
+上記 3. を実装した (`validator._reading_plausible`)。ラベル付きデータは `disputed-labels.json`、
+再採点スクリプトは `rescore-disputed.py`、結果は `eval/FINDINGS.md §5.8` (巻き添え 0、捏造の 47% を棄却、best-of-N 変更 0/100)。
+
 ## 再現
 
 分類の元データ: run 2 の `[eval] paired-*` セッションから最終短歌の validations を抽出

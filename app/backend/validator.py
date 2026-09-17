@@ -241,11 +241,51 @@ def _violation(rule: str, severity: Severity, weight: int, message: str) -> Viol
     return Violation(rule=rule, severity=severity, weight=weight, message=message)
 
 
+_KANA_RUN = re.compile(r"[ぁ-ゖァ-ヺー]+")
+_SEGMENT = re.compile(r"[ぁ-ゖァ-ヺー]+|[^ぁ-ゖァ-ヺー\s\u3000]+")
+
+
+def _align_reading(body: str, yomi: str) -> list[str] | None:
+    """本文のかな部分をアンカーにして読みを整列し、漢字 run ごとの読みを返す。
+
+    本文「風の声聞く」→ 区分 [風][の][声聞][く] → 読み「かぜのこえきく」は (かぜ)の(こえき)く と
+    整列でき、漢字 run の読み ["かぜ", "こえき"] を返す。本文のかな (助詞・送り仮名) を
+    そのまま含まない読みは整列できず None (= 本文の読みではない)。"""
+    pattern = "".join(
+        re.escape(seg) if _KANA_RUN.fullmatch(seg) else "(.+?)"
+        for seg in _SEGMENT.findall(body)
+    )
+    m = re.fullmatch(pattern, yomi)
+    return list(m.groups()) if m else None
+
+
+def _reading_plausible(body: str, model_reading: str, canonical: str) -> tuple[bool, str]:
+    """モデル提供の読みが「本文の別読み」として妥当か (mora_count_disputed の救済条件、#76)。
+
+    救済の意図は pykakasi の辞書違い (古語・詩語) であり、それは漢字 1 語の読み差として現れる。
+    規定拍を知るモデルは拍数に合わせて読みを捏造するため (run 2 の disputed 65 件中 57%)、
+    以下を満たすときだけ救済する:
+    1. 本文のかな部分 (助詞・送り仮名) が読みに順序どおり含まれる (助詞脱落・語尾改変は捏造)
+    2. pykakasi 読みと食い違う漢字 run が 1 箇所以下 (複数箇所で違う読みは辞書違いではない)
+    pykakasi 側が整列できない (かな変換の副作用) ときは従来どおり救済する (偽陽性を避ける)。"""
+    model_groups = _align_reading(body, model_reading)
+    if model_groups is None:
+        return False, "読みが本文のかな部分と一致しない"
+    canon_groups = _align_reading(body, canonical)
+    if canon_groups is None:
+        return True, ""
+    loci = sum(a != b for a, b in zip(model_groups, canon_groups))
+    if loci > 1:
+        return False, f"pykakasi 読みと {loci} 箇所で食い違う"
+    return True, ""
+
+
 def _rule_mora_count(t: Tanka) -> list[Violation]:
     """各句の拍数 (5-7-5-7-7) を漢字本体から pykakasi で独立計算したもので検証する。
 
     3 段階の判定 (Phase 1 B5b):
     - pykakasi だけ違って model 提供読みは正しい  → mora_count_disputed (-3 minor) 古典読み疑い
+      (#76: モデル読みが本文の別読みとして妥当なときだけ。捏造読みは下の 2 段階に落とす)
     - 1 拍だけずれている (字余り/字足らず)          → mora_count_off_by_one (-3 minor) 許容範囲
     - 2 拍以上違う                                 → mora_count (-10 critical) 本物の違反
     """
@@ -258,15 +298,20 @@ def _rule_mora_count(t: Tanka) -> list[Violation]:
             continue
         model_count = reading.count_moras(line.reading)
 
+        rejected_note = ""
         if model_count == expected[i]:
-            # モデル提供の読みは正しい拍数。pykakasi の辞書違いの可能性が高い。
-            out.append(_violation(
-                "mora_count_disputed", "minor", _w("mora_count_disputed"),
-                f"{i+1}句目「{line.body}」は pykakasi 計算で {actual} 拍 ({canonical}) だが、"
-                f"モデル提供の読み「{line.reading}」では {expected[i]} 拍。"
-                f"古典読み等で判定が分かれた可能性があります。読みを再確認してください。"
-            ))
-            continue
+            plausible, why = _reading_plausible(line.body, line.reading, canonical)
+            if plausible:
+                # モデル提供の読みは正しい拍数で本文とも整合。pykakasi の辞書違いの可能性が高い。
+                out.append(_violation(
+                    "mora_count_disputed", "minor", _w("mora_count_disputed"),
+                    f"{i+1}句目「{line.body}」は pykakasi 計算で {actual} 拍 ({canonical}) だが、"
+                    f"モデル提供の読み「{line.reading}」では {expected[i]} 拍。"
+                    f"古典読み等で判定が分かれた可能性があります。読みを再確認してください。"
+                ))
+                continue
+            # 読み欄で拍数を合わせているだけ。本文の拍数違反として扱い、本文の修正を促す
+            rejected_note = f"（読み「{line.reading}」は {why} ため採用しません。読みでなく本文を整えてください）"
 
         diff = abs(actual - expected[i])
         if diff == 1:
@@ -275,11 +320,11 @@ def _rule_mora_count(t: Tanka) -> list[Violation]:
             out.append(_violation(
                 "mora_count_off_by_one", "minor", _w("mora_count_off_by_one"),
                 f"{i+1}句目「{line.body}」は {actual} 拍 ({canonical})、{expected[i]} 拍が標準。"
-                f"{label} は意図的な技法として許容されるが、特に意味がなければ整えてください。"
+                f"{label} は意図的な技法として許容されるが、特に意味がなければ整えてください。{rejected_note}"
             ))
         else:
-            note = ""
-            if model_count != actual:
+            note = rejected_note
+            if not note and model_count != actual:
                 note = f"（モデル提供読み「{line.reading}」は {model_count} 拍と主張）"
             out.append(_violation(
                 "mora_count", "critical", _w("mora_count"),

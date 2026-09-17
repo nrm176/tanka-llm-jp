@@ -1,0 +1,525 @@
+{
+ "_comment": "run 2 (self-critique paired) の最終短歌の mora_count_disputed 65 件。label: A=pykakasi 誤読 (v2 override で是正) / A'=pykakasi 誤読だが安全な override 無し / B=両読み正当 / C=モデル読みの捏造。分類根拠は disputed-curation.md。pykakasi 列は v1 辞書 (精査時点) の読み。",
+ "cases": [
+  {
+   "body": "明日への道",
+   "expected": 7,
+   "pykakasi": "あすへのみち",
+   "model": "あしたへのみち",
+   "label": "B",
+   "theme": "春の別れ"
+  },
+  {
+   "body": "朝光",
+   "expected": 5,
+   "pykakasi": "ともみつ",
+   "model": "あさひかり",
+   "label": "A",
+   "theme": "新生活への不安と希望"
+  },
+  {
+   "body": "雨川の辺へ",
+   "expected": 7,
+   "pykakasi": "あめかわのへんへ",
+   "model": "あめかわのべへ",
+   "label": "A'",
+   "theme": "おぼろ月夜の情趣"
+  },
+  {
+   "body": "切なさ胸",
+   "expected": 7,
+   "pykakasi": "せつなさむね",
+   "model": "きれなさむむね",
+   "label": "C",
+   "theme": "おぼろ月夜の情趣"
+  },
+  {
+   "body": "道へ流れ",
+   "expected": 7,
+   "pykakasi": "みちへながれ",
+   "model": "みちへながれい",
+   "label": "C",
+   "theme": "雪解け水の流れ"
+  },
+  {
+   "body": "光の舞ひ",
+   "expected": 7,
+   "pykakasi": "ひかりのまひ",
+   "model": "ひかりのまいひ",
+   "label": "C",
+   "theme": "短い夏の夜への惜別"
+  },
+  {
+   "body": "潮騒や灯り",
+   "expected": 7,
+   "pykakasi": "しおさいやあかり",
+   "model": "しおさやあかり",
+   "label": "C",
+   "theme": "海辺の街を見下ろす坂道"
+  },
+  {
+   "body": "波音のみ",
+   "expected": 5,
+   "pykakasi": "なみおとのみ",
+   "model": "はおんのみ",
+   "label": "C",
+   "theme": "海辺の街を見下ろす坂道"
+  },
+  {
+   "body": "夏夜遠しや",
+   "expected": 7,
+   "pykakasi": "なつよるとおしや",
+   "model": "なつよとおしや",
+   "label": "B",
+   "theme": "海辺の街を見下ろす坂道"
+  },
+  {
+   "body": "川面照らす",
+   "expected": 7,
+   "pykakasi": "かわもてらす",
+   "model": "かわもてるらす",
+   "label": "C",
+   "theme": "蛍の舞う川辺"
+  },
+  {
+   "body": "心に灯りや",
+   "expected": 7,
+   "pykakasi": "こころにあかりや",
+   "model": "こころあかりや",
+   "label": "C",
+   "theme": "蛍の舞う川辺"
+  },
+  {
+   "body": "儚さを抱け",
+   "expected": 7,
+   "pykakasi": "ぼうさをだけ",
+   "model": "はかなさをだき",
+   "label": "A",
+   "theme": "蛍の舞う川辺"
+  },
+  {
+   "body": "夜店灯",
+   "expected": 5,
+   "pykakasi": "よみせともしび",
+   "model": "やてんとう",
+   "label": "B",
+   "theme": "夏祭りの夜店の灯り"
+  },
+  {
+   "body": "五月雨",
+   "expected": 5,
+   "pykakasi": "さみだれ",
+   "model": "ごがつあめ",
+   "label": "C",
+   "theme": "五月雨に煙る山寺"
+  },
+  {
+   "body": "昼光",
+   "expected": 5,
+   "pykakasi": "ちゅうこう",
+   "model": "ひるひかり",
+   "label": "B",
+   "theme": "扇風機の前で昼寝する猫"
+  },
+  {
+   "body": "紅葉散りて",
+   "expected": 7,
+   "pykakasi": "もみじちりて",
+   "model": "こうようちりて",
+   "label": "B",
+   "theme": "紅葉の散る山道"
+  },
+  {
+   "body": "土道に",
+   "expected": 5,
+   "pykakasi": "どどうに",
+   "model": "つちみちに",
+   "label": "A'",
+   "theme": "紅葉の散る山道"
+  },
+  {
+   "body": "夜更けの",
+   "expected": 5,
+   "pykakasi": "よふけの",
+   "model": "よるふけの",
+   "label": "C",
+   "theme": "夜更けのコンビニの灯り"
+  },
+  {
+   "body": "静かな慰めよ",
+   "expected": 7,
+   "pykakasi": "しずかななぐさめよ",
+   "model": "しずかないたよ",
+   "label": "C",
+   "theme": "夜更けのコンビニの灯り"
+  },
+  {
+   "body": "儚さや",
+   "expected": 5,
+   "pykakasi": "ぼうさや",
+   "model": "はかなさや",
+   "label": "A",
+   "theme": "虫の音に聞く命の儚さ"
+  },
+  {
+   "body": "静かに置く",
+   "expected": 7,
+   "pykakasi": "しずかにおく",
+   "model": "しずかにおくる",
+   "label": "C",
+   "theme": "衣替えの日に感じる季節の移ろい"
+  },
+  {
+   "body": "路地の火",
+   "expected": 5,
+   "pykakasi": "ろじのひ",
+   "model": "ろうじのび",
+   "label": "C",
+   "theme": "冬の寂寥"
+  },
+  {
+   "body": "小さき滴",
+   "expected": 5,
+   "pykakasi": "ちーさきしずく",
+   "model": "こさきてき",
+   "label": "A'",
+   "theme": "凍てつく窓ガラスの結露"
+  },
+  {
+   "body": "雪夜の道",
+   "expected": 7,
+   "pykakasi": "せつやのみち",
+   "model": "ゆきよなのみち",
+   "label": "A'",
+   "theme": "年の瀬に振り返る一年"
+  },
+  {
+   "body": "人の声遠く",
+   "expected": 7,
+   "pykakasi": "にんのこえとおく",
+   "model": "ひとのこえとお",
+   "label": "A'",
+   "theme": "終電を待つホームの寒さと孤独"
+  },
+  {
+   "body": "孤独胸に抱く",
+   "expected": 7,
+   "pykakasi": "こどくむねにだく",
+   "model": "こどくむねだく",
+   "label": "C",
+   "theme": "終電を待つホームの寒さと孤独"
+  },
+  {
+   "body": "蓮咲く池",
+   "expected": 5,
+   "pykakasi": "はすさくいけ",
+   "model": "はすさくち",
+   "label": "C",
+   "theme": "水仙の白い花"
+  },
+  {
+   "body": "初詣の",
+   "expected": 5,
+   "pykakasi": "はつもうでの",
+   "model": "こうはいの",
+   "label": "C",
+   "theme": "初詣の長い行列"
+  },
+  {
+   "body": "切なさ胸にや",
+   "expected": 7,
+   "pykakasi": "せつなさむねにや",
+   "model": "きなさむねにや",
+   "label": "C",
+   "theme": "別れた恋人を思い出す午後"
+  },
+  {
+   "body": "胸が躍る朝",
+   "expected": 7,
+   "pykakasi": "むねがおどるあさ",
+   "model": "むねがやくあさ",
+   "label": "C",
+   "theme": "通学路の桜並木"
+  },
+  {
+   "body": "胸に灯す光",
+   "expected": 7,
+   "pykakasi": "むねにともすひかり",
+   "model": "むねにともすご",
+   "label": "C",
+   "theme": "新生活への不安と希望"
+  },
+  {
+   "body": "水辺静かに",
+   "expected": 7,
+   "pykakasi": "すいへんしずかに",
+   "model": "かわべしずかに",
+   "label": "C",
+   "theme": "おぼろ月夜の情趣"
+  },
+  {
+   "body": "静かに滴る",
+   "expected": 7,
+   "pykakasi": "しずかにしたたる",
+   "model": "しずかにたれる",
+   "label": "C",
+   "theme": "雪解け水の流れ"
+  },
+  {
+   "body": "虹映す光",
+   "expected": 7,
+   "pykakasi": "にじうつすひかり",
+   "model": "にじうつすごう",
+   "label": "C",
+   "theme": "夕立のあとの虹"
+  },
+  {
+   "body": "儚く散りぬ",
+   "expected": 7,
+   "pykakasi": "ぼうくちりぬ",
+   "model": "はかなくしりぬ",
+   "label": "A",
+   "theme": "夕立のあとの虹"
+  },
+  {
+   "body": "灯火揺れし",
+   "expected": 7,
+   "pykakasi": "とうかゆれし",
+   "model": "とうかりゆれし",
+   "label": "C",
+   "theme": "海辺の街を見下ろす坂道"
+  },
+  {
+   "body": "切なく笑む",
+   "expected": 7,
+   "pykakasi": "せつなくえむ",
+   "model": "せつなくわらむ",
+   "label": "C",
+   "theme": "蛍の舞う川辺"
+  },
+  {
+   "body": "煙る寺の灯",
+   "expected": 7,
+   "pykakasi": "けぶるてらのともしび",
+   "model": "けむりてらのひ",
+   "label": "C",
+   "theme": "五月雨に煙る山寺"
+  },
+  {
+   "body": "五月雨",
+   "expected": 5,
+   "pykakasi": "さみだれ",
+   "model": "さつうあめ",
+   "label": "C",
+   "theme": "五月雨に煙る山寺"
+  },
+  {
+   "body": "切なさが胸に",
+   "expected": 7,
+   "pykakasi": "せつなさがむねに",
+   "model": "せつながむねに",
+   "label": "C",
+   "theme": "五月雨に煙る山寺"
+  },
+  {
+   "body": "紅葉散るや",
+   "expected": 7,
+   "pykakasi": "もみじちるや",
+   "model": "こうようちりや",
+   "label": "B",
+   "theme": "紅葉の散る山道"
+  },
+  {
+   "body": "葉が舞い散る",
+   "expected": 7,
+   "pykakasi": "はがまいちる",
+   "model": "はがまいちらる",
+   "label": "C",
+   "theme": "秋風に覚える物の哀れ"
+  },
+  {
+   "body": "夜灯や",
+   "expected": 5,
+   "pykakasi": "やとうや",
+   "model": "よるとうや",
+   "label": "B",
+   "theme": "夜更けのコンビニの灯り"
+  },
+  {
+   "body": "灯揺れて夜",
+   "expected": 7,
+   "pykakasi": "ともしびゆれてよる",
+   "model": "ともゆれてよる",
+   "label": "B",
+   "theme": "夜更けのコンビニの灯り"
+  },
+  {
+   "body": "風の声聞く",
+   "expected": 7,
+   "pykakasi": "かぜのしょうもんく",
+   "model": "かぜのこえきく",
+   "label": "A",
+   "theme": "名月を仰ぐ宵"
+  },
+  {
+   "body": "紅葉や",
+   "expected": 5,
+   "pykakasi": "もみじや",
+   "model": "こうようや",
+   "label": "B",
+   "theme": "落ち葉を踏みしめる帰り道"
+  },
+  {
+   "body": "蛍灯",
+   "expected": 5,
+   "pykakasi": "ほたるともしび",
+   "model": "ほたるとう",
+   "label": "B",
+   "theme": "虫の音に聞く命の儚さ"
+  },
+  {
+   "body": "白き灯",
+   "expected": 5,
+   "pykakasi": "しろきともしび",
+   "model": "しろきとう",
+   "label": "B",
+   "theme": "降りしきる雪"
+  },
+  {
+   "body": "静かな息吹の",
+   "expected": 7,
+   "pykakasi": "しずかないぶきの",
+   "model": "しずかいぶきの",
+   "label": "C",
+   "theme": "冬の寂寥"
+  },
+  {
+   "body": "凍光よ",
+   "expected": 5,
+   "pykakasi": "とうひかりよ",
+   "model": "いてこうよ",
+   "label": "B",
+   "theme": "凍てつく窓ガラスの結露"
+  },
+  {
+   "body": "霜や野",
+   "expected": 5,
+   "pykakasi": "しもやの",
+   "model": "ふゆややの",
+   "label": "C",
+   "theme": "枯野に立つ一本の木"
+  },
+  {
+   "body": "白き衣纏う",
+   "expected": 7,
+   "pykakasi": "しろきころもまとう",
+   "model": "しろきいとまう",
+   "label": "C",
+   "theme": "枯野に立つ一本の木"
+  },
+  {
+   "body": "寂しさだけ",
+   "expected": 7,
+   "pykakasi": "さびしさだけ",
+   "model": "さびしさだけの",
+   "label": "C",
+   "theme": "枯野に立つ一本の木"
+  },
+  {
+   "body": "こたつ灯",
+   "expected": 5,
+   "pykakasi": "こたつともしび",
+   "model": "こたっとう",
+   "label": "B",
+   "theme": "炬燵で蜜柑を食べる団欒"
+  },
+  {
+   "body": "余韻だけが",
+   "expected": 7,
+   "pykakasi": "よいんだけが",
+   "model": "いよんじだけが",
+   "label": "C",
+   "theme": "炬燵で蜜柑を食べる団欒"
+  },
+  {
+   "body": "心静かにや",
+   "expected": 7,
+   "pykakasi": "こころしずかにや",
+   "model": "こころしずかや",
+   "label": "C",
+   "theme": "初日の出を仰ぐ"
+  },
+  {
+   "body": "屋根白くや",
+   "expected": 7,
+   "pykakasi": "やねしろくや",
+   "model": "やねはくしくや",
+   "label": "C",
+   "theme": "元日の朝の清新な気持ち"
+  },
+  {
+   "body": "朝光射す",
+   "expected": 7,
+   "pykakasi": "ともみつさす",
+   "model": "あさひかりさす",
+   "label": "A",
+   "theme": "元日の朝の清新な気持ち"
+  },
+  {
+   "body": "清らか息吹",
+   "expected": 7,
+   "pykakasi": "きよしらかいぶき",
+   "model": "きよらかいぶき",
+   "label": "A",
+   "theme": "元日の朝の清新な気持ち"
+  },
+  {
+   "body": "部活後や",
+   "expected": 5,
+   "pykakasi": "ぶかつのちや",
+   "model": "ぶかつごや",
+   "label": "B",
+   "theme": "剣道部の男女の部員が夏休みの部活帰りに一緒に坂道を下りながら遠くの海辺の街を眺める"
+  },
+  {
+   "body": "胸に温かさ",
+   "expected": 7,
+   "pykakasi": "むねにあたたかさ",
+   "model": "むねあたたかさ",
+   "label": "C",
+   "theme": "剣道部の男女の部員が夏休みの部活帰りに一緒に坂道を下りながら遠くの海辺の街を眺める"
+  },
+  {
+   "body": "夜の闇　蛍",
+   "expected": 7,
+   "pykakasi": "よるのやみ　ほたる",
+   "model": "よなやみほたる",
+   "label": "C",
+   "theme": "都会の喧騒の中で感じる無常"
+  },
+  {
+   "body": "屋根かすむく声",
+   "expected": 7,
+   "pykakasi": "やねかすむくこえ",
+   "model": "やねかすむこえ",
+   "label": "C",
+   "theme": "失われた故郷への郷愁"
+  },
+  {
+   "body": "窓辺の灯",
+   "expected": 5,
+   "pykakasi": "まどべのともしび",
+   "model": "まどべのひ",
+   "label": "B",
+   "theme": "病室の窓から見える景色"
+  },
+  {
+   "body": "灯揺れ遠",
+   "expected": 7,
+   "pykakasi": "ともしびゆれえん",
+   "model": "あかりゆれとお",
+   "label": "B",
+   "theme": "病室の窓から見える景色"
+  }
+ ]
+}
