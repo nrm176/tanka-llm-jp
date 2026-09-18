@@ -35,3 +35,9 @@ nohup caffeinate -dims ./eval-paired.sh w-base '{}' w-heavy '{"weights":{"mora_c
 ## 2. 判定
 
 `uv run python eval/experiments/mora-weights/analyze-weights.py <sid_base> <sid_heavy>`
+
+## 3. 結果 (2026-09-18 13:47 完了、6.6h)
+
+sessions: base `6aac651a4df2c0d6727ef299` / heavy `6aac651a4df2c0d6727ef29a`。results: `20260918-070930-*`。
+逸脱句数 Δ −0.42 (2SE 0.29) **有意**、完全一致率 +18 pp (2SE 21) 判定不能、所要 +40.6% (< +50%) → **採用条件を満たす**。
+効果は前半 (春〜秋) に偏る (前半 −0.84 / 後半 0.00、冬は base が例外的に当たった)。詳細 `eval/FINDINGS.md §5.9`。
