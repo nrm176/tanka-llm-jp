@@ -643,8 +643,11 @@ def evaluate(
     expected_kigo: str | None = None,
     theme: str | None = None,
     strict_disputed: bool = True,
+    weight_overrides: dict[str, int] | None = None,
 ) -> ValidationResult:
     """通常ルール + (任意で) Plan 由来の期待値・お題との整合チェック。
+    weight_overrides はルール重みの per-request 上書き (eval/ablation 用、{rule: weight})。
+    critique / lesson 選択 (最大重み優先) にもそのまま反映される。
 
     expected_season / expected_kigo を渡すと、それと一致しない場合に大きな違反として
     score を下げる (Plan→Compose のすり替え矯正)。
@@ -671,6 +674,10 @@ def evaluate(
         violations.extend(_check_theme_time_uncovered(t, theme))
         violations.extend(_check_theme_motif(t, theme))
 
+    if weight_overrides:
+        for v in violations:
+            if v.rule in weight_overrides:
+                v.weight = weight_overrides[v.rule]
     score = max(0, 100 - sum(v.weight for v in violations))
     return ValidationResult(
         score=score,

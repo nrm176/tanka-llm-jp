@@ -39,7 +39,7 @@ from typing import Any, Literal
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 import db
 import bus as q
@@ -153,6 +153,21 @@ class TankaRequest(BaseModel):
     # mora_count_disputed の救済条件 (#76) の per-request 上書き (eval 用)。None = True (厳格)。
     # False は #76 以前の無条件救済で、paired A/B の対照 arm にのみ使う
     strict_disputed: bool | None = None
+    # ルール重みの per-request 上書き (eval/ablation 用)。{rule: weight}。未知のルール名は 422
+    weights: dict[str, int] | None = None
+
+    @field_validator("weights")
+    @classmethod
+    def _known_rules(cls, v):
+        if v is None:
+            return v
+        import validator as _validator
+        unknown = sorted(set(v) - set(_validator.RULE_WEIGHTS))
+        if unknown:
+            raise ValueError(f"unknown rule(s): {unknown}")
+        if any(not (0 <= w <= 100) for w in v.values()):
+            raise ValueError("weights must be 0..100")
+        return v
 
 
 class PlanDraftRequest(BaseModel):
@@ -370,10 +385,10 @@ async def tanka_endpoint(req: TankaRequest) -> dict:
     db.append_message(sid, {"kind": "user", "content": f"tanka:{req.theme}"})
     task = db.create_task(sid, kind="tanka", input_data={
         "theme": req.theme, "max_refines": req.max_refines, "model": model,
-        "manual_plan": manual_plan, "self_critique": req.self_critique, "strict_disputed": req.strict_disputed})
+        "manual_plan": manual_plan, "self_critique": req.self_critique, "strict_disputed": req.strict_disputed, "weights": req.weights})
     tasks.start_tanka(task["id"], sid, req.theme, req.max_refines,
                       model=model, manual_plan=manual_plan, self_critique=req.self_critique,
-                      strict_disputed=req.strict_disputed)
+                      strict_disputed=req.strict_disputed, weight_overrides=req.weights)
 
     return {"task_id": task["id"], "session_id": sid, "kind": "tanka"}
 
