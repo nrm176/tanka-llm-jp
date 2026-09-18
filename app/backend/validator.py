@@ -47,7 +47,7 @@ PASS_THRESHOLD = _env_int("TANKA_PASS_THRESHOLD", 80)
 # ルール重み (減点)。値が大きいほど refine 強制力が強い。
 RULE_WEIGHTS: dict[str, int] = {
     # critical
-    "mora_count":            _env_int("TANKA_W_MORA_COUNT", 10),
+    "mora_count":            _env_int("TANKA_W_MORA_COUNT", 25),   # 2 拍以上の 1 句で単独不合格 (FINDINGS §5.9)
     "kigo_present":          _env_int("TANKA_W_KIGO_PRESENT", 25),
     "season_matches_plan":   _env_int("TANKA_W_SEASON_MATCHES_PLAN", 30),
     # major
@@ -59,9 +59,9 @@ RULE_WEIGHTS: dict[str, int] = {
     "no_other_kigo_same":    _env_int("TANKA_W_NO_OTHER_KIGO_SAME", 25),
     "kigo_in_dictionary":    _env_int("TANKA_W_KIGO_IN_DICTIONARY", 5),
     "repeated_word":         _env_int("TANKA_W_REPEATED_WORD", 3),
-    "mora_count_disputed":   _env_int("TANKA_W_MORA_DISPUTED", 3),
+    "mora_count_disputed":   _env_int("TANKA_W_MORA_DISPUTED", 12),   # off_by_one と同じ (§5.9)
     # 新規 (Phase 1)
-    "mora_count_off_by_one": _env_int("TANKA_W_MORA_OFF_BY_ONE", 3),   # B5b: 字余り/字足らず
+    "mora_count_off_by_one": _env_int("TANKA_W_MORA_OFF_BY_ONE", 12),  # B5b: 字余りは一首に一度まで (1 句 88 合格 / 2 句 76 不合格、§5.9)
     "kireji_absent":         _env_int("TANKA_W_KIREJI_ABSENT", 3),     # B5a+B5c: 句切れ・体言止め
     # お題との整合 (theme-aware)
     "theme_time_mismatch":   _env_int("TANKA_W_THEME_TIME_MISMATCH", 25),  # 夕暮れのお題に朝 等
