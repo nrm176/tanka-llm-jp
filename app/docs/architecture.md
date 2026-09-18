@@ -480,8 +480,9 @@ parse_tanka_json (code fence / 前後散文を剥がす + JSON.loads)
      │
      ▼
 RULES (副作用なしの check 関数群)
-   ├─ _rule_mora_count           critical -10  拍数 5-7-5-7-7
-   ├─ _rule_mora_count_disputed  minor    -3   pykakasi だけ違う (古典読み)。モデル読みが本文の別読みとして妥当なときのみ (#76)
+   ├─ _rule_mora_count           critical -25  拍数 5-7-5-7-7 (2 拍以上、1 句で単独不合格。§5.9 で 10→25)
+   │    └ mora_count_off_by_one  minor    -12  ±1 拍 (字余りは一首に一度まで: 1 句 88 合格 / 2 句 76 不合格。§5.9 で 3→12)
+   ├─ _rule_mora_count_disputed  minor    -12  pykakasi だけ違う (古典読み)。モデル読みが本文の別読みとして妥当なときのみ (#76)
    ├─ _rule_kigo_present         critical -25  宣言季語が本文に出るか
    ├─ _rule_kigo_unique          major    -15  ちょうど 1 回か
    ├─ _rule_kigo_in_dictionary   minor    -5   歳時記辞書に登録あるか
@@ -739,13 +740,13 @@ TANKA_SELF_CRITIQUE=0 docker compose up -d backend   # 設定を変えて backen
 指標: 初回合格率 / 総合合格率 / 平均 attempt 数 / 平均最終スコア / plateau 率 /
 スコア分布 / ルール別違反頻度。詳細は [`eval/README.md`](../backend/eval/README.md)。
 
-`validator` は副作用ゼロの純関数集合なので pytest で単体テスト可能 (`uv run pytest`、251 ケース。validator 以外の純関数部分も含む)。
+`validator` は副作用ゼロの純関数集合なので pytest で単体テスト可能 (`uv run pytest`、261 ケース。validator 以外の純関数部分も含む)。
 
 ---
 
 ## 11. 既知の限界
 
-- **pykakasi は現代漢字辞書**。古典固有の読み (例: 「日」を「ひ」と読む) を一部誤判定する。`mora_count_disputed` ルールで minor (-3) に降格して対応。
+- **pykakasi は現代漢字辞書**。古典固有の読み (例: 「日」を「ひ」と読む) を一部誤判定する。`mora_count_disputed` ルールで minor (-12、off_by_one と同じ) に降格して対応。
 - **季語辞書は限定的** (226 語)。マイナーな季題には `kigo_in_dictionary` minor warning が出る。必要なら拡張可。
 - **8B モデルは指示追従が弱い**。Plan で決めた季節を Compose で勝手に変える等。validator の Plan 整合ルールでカバー。
 - **コンテキスト長**。refine 回数が多くなると LM Studio のコンテキストを使い切る可能性。HARD_CAP=50 が安全網。

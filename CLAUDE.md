@@ -324,6 +324,7 @@ validator / reading が fail-loud で起動を止める (silent degrade しな�
 | Plan/Compose 整合性は **validator ルール** で強制 | プロンプトで願うだけでは 8B には効かない |
 | 長期失敗記憶は **季節フィルタ** + LESSONS で教訓化 | 関係ない失敗を混ぜると逆効果。"これをやるな" を明示するほうが効く |
 | **graceful shutdown** に lifespan + stop_grace_period 30s | LLM の partial save に余裕を確保 |
+| **拍数の重みは 12/12/25** (off_by_one / disputed / mora_count。旧 3/3/10) | 合格ライン 80 に対し「字余りは一首に一度まで」(1 句 88 合格 / 2 句 76 不合格 / 2 拍以上は単独不合格)。旧重みでは最終短歌の 76% が 5-7-5-7-7 を外しても refine が走らなかった。paired A/B (FINDINGS §5.9) で逸脱句数 0.92→0.50 (有意)、所要 +41%。**score の尺度が変わったので、それ以前の結果ファイルと平均点を直接比較しないこと** |
 | **self-critique は既定 OFF** (env `TANKA_SELF_CRITIQUE=1` / per-request で ON 可) | paired A/B ×2 (FINDINGS §5.6/§5.7) で品質差は測定限界以下 (Δ +0.9、2SE 2.4) なのに所要 +43%。検証器が外部にある設計ではモデル内の自己点検は二重投資。**測定なしに ON に戻さないこと** |
 | モデル選定は **「閉じる thinking か非-thinking」を優先**し、ベンチの素の実力で選ばない | 外部 validator + refine がある設計では、モデル内 thinking は二重に無駄で暴走の元。検証は機械に任せ、モデルには速いドラフト + 応答性のみ求める。実証で素の実力と最終品質の順位が反転した (`app/docs/design-principle-verifier-in-the-loop.md`) |
 
@@ -334,7 +335,7 @@ validator / reading が fail-loud で起動を止める (silent degrade しな�
 ### 自動テスト (Phase 2 で導入)
 
 ```bash
-# 単体テスト (251 ケース: validator / tasks reducer / db 変換 / llm 合流・救済 / thinking cap 等。副作用ゼロなので LLM/DB 不要)
+# 単体テスト (261 ケース: validator / tasks reducer / db 変換 / llm 合流・救済 / thinking cap 等。副作用ゼロなので LLM/DB 不要)
 cd app/backend && uv run pytest -q
 ```
 

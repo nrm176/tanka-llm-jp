@@ -332,6 +332,36 @@ def test_mora_count_off_by_two_is_critical():
     assert "mora_count" in rules_fired(result)
 
 
+# ─── 拍数の既定重み (FINDINGS §5.9): 字余りは一首に一度まで ───
+
+def _with_lines(lines):
+    return make_tanka(kigo="蛍", season="夏", lines=lines)
+
+
+def test_one_jiamari_line_still_passes():
+    # 1 句だけ +1 → 88 で合格 (古典の字余りを許容)
+    r = validator.evaluate(_with_lines([
+        ("蛍の火", "ほたるのひ"), ("川面に揺れつつ", "かわもにゆれつつ"), ("闇の中", "やみのなか"),
+        ("ひとり佇み", "ひとりたたずみ"), ("風を感じぬ", "かぜをかんじぬ")]))
+    assert rules_fired(r) == {"mora_count_off_by_one"} and r.passed
+
+
+def test_two_jiamari_lines_fail():
+    # 2 句 +1 → 76 で不合格 (refine を強制)
+    r = validator.evaluate(_with_lines([
+        ("蛍の火", "ほたるのひ"), ("川面に揺れつつ", "かわもにゆれつつ"), ("闇の中", "やみのなか"),
+        ("ひとり佇みて", "ひとりたたずみて"), ("風を感じぬ", "かぜをかんじぬ")]))
+    assert not r.passed and r.score < validator.PASS_THRESHOLD
+
+
+def test_one_two_mora_line_fails_alone():
+    # 1 句 +2 → 75 で単独不合格
+    r = validator.evaluate(_with_lines([
+        ("蛍の火", "ほたるのひ"), ("川面に揺れつつも", "かわもにゆれつつも"), ("闇の中", "やみのなか"),
+        ("ひとり佇み", "ひとりたたずみ"), ("風を感じぬ", "かぜをかんじぬ")]))
+    assert "mora_count" in rules_fired(r) and not r.passed
+
+
 # ─── mora_count_disputed の救済条件 (#76): 本文の別読みとして妥当な読みだけ救済する ───
 
 def _messages(result, rule):
