@@ -13,7 +13,7 @@ import tanka
 import validator
 from validator import Tanka, TankaLine
 
-# 2 句目 +1 (字余り) と 4 句目 +1: 現行重み (3+3) なら 94 で合格、12/12 なら 76 で不合格
+# 2 句目 +1 (字余り) と 4 句目 +1。既定重み (12) なら 76 で不合格、上書き 1 なら 98 で合格
 _LINES = [
     {"body": "蛍の火", "reading": "ほたるのひ"},
     {"body": "川面に揺れつつ", "reading": "かわもにゆれつつ"},
@@ -23,7 +23,8 @@ _LINES = [
 ]
 _TANKA_JSON = json.dumps({"kigo": "蛍", "season": "夏", "lines": _LINES,
                           "image": "川辺を一匹の蛍が飛ぶ", "emotion": "静かな余韻"}, ensure_ascii=False)
-_W = {"mora_count_off_by_one": 12, "mora_count_disputed": 12, "mora_count": 25}
+_W = {"mora_count_off_by_one": 1, "mora_count_disputed": 1, "mora_count": 1}   # 既定と明確に違う値
+_DEFAULT = validator.RULE_WEIGHTS["mora_count_off_by_one"]
 
 
 def _tanka():
@@ -34,15 +35,15 @@ def test_evaluate_applies_overrides_to_score_and_pass():
     base = validator.evaluate(_tanka())
     over = validator.evaluate(_tanka(), weight_overrides=_W)
     off = [v for v in over.violations if v.rule == "mora_count_off_by_one"]
-    assert len(off) == 2 and all(v.weight == 12 for v in off)
-    assert base.score - over.score == 2 * (12 - 3)
-    assert base.passed and not over.passed
+    assert len(off) == 2 and all(v.weight == 1 for v in off)
+    assert over.score - base.score == 2 * (_DEFAULT - 1)
+    assert over.passed and not base.passed
 
 
 def test_overrides_do_not_touch_other_rules():
     over = validator.evaluate(_tanka(), weight_overrides={"repeated_word": 50})
     assert {v.rule for v in over.violations} == {"mora_count_off_by_one"}
-    assert all(v.weight == 3 for v in over.violations)
+    assert all(v.weight == _DEFAULT for v in over.violations)
 
 
 def test_pipeline_threads_weight_overrides(monkeypatch):
@@ -60,8 +61,8 @@ def test_pipeline_threads_weight_overrides(monkeypatch):
         return [ev async for ev in tanka.generate_tanka_pipeline("夏の川", max_refines=0, model="m",
                                                                  self_critique=False, **kw)
                 if ev["type"] == "validation"]
-    assert asyncio.run(run())[0]["score"] == 94
-    assert asyncio.run(run(weight_overrides=_W))[0]["score"] == 76
+    assert asyncio.run(run())[0]["score"] == 100 - 2 * _DEFAULT
+    assert asyncio.run(run(weight_overrides=_W))[0]["score"] == 98
 
 
 def test_request_rejects_unknown_rule():
