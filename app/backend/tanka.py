@@ -182,7 +182,8 @@ def _lessons_event(entries: list[dict]) -> dict[str, Any]:
 
 
 def _score_one(validator, composition: str, season_hint: str | None, kigo_hint: str | None,
-               theme: str, strict_disputed: bool = True) -> dict[str, Any]:
+               theme: str, strict_disputed: bool = True,
+               weight_overrides: dict[str, int] | None = None) -> dict[str, Any]:
     """1 つの出力を検証して、validation イベントに必要な要素を dict で返す。"""
     meta: dict[str, Any] = {}
     parsed = validator.parse_tanka_json(composition, meta=meta)
@@ -198,7 +199,7 @@ def _score_one(validator, composition: str, season_hint: str | None, kigo_hint: 
             "failure_summary": f"score=0, schema_invalid: {err_msg}",
         }
     result = validator.evaluate(parsed, expected_season=season_hint, expected_kigo=kigo_hint, theme=theme,
-                                strict_disputed=strict_disputed)
+                                strict_disputed=strict_disputed, weight_overrides=weight_overrides)
     return {
         "tanka_obj": parsed, "score": result.score, "json_repaired": repaired, "key_typo": key_typo,
         "errors": result.errors, "warnings": result.warnings,
@@ -290,7 +291,8 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
                                   model: str | None = None,
                                   manual_plan: dict | None = None,
                                   self_critique: bool | None = None,
-                                  strict_disputed: bool | None = None) -> AsyncIterator[dict[str, Any]]:
+                                  strict_disputed: bool | None = None,
+                                  weight_overrides: dict[str, int] | None = None) -> AsyncIterator[dict[str, Any]]:
     """短歌生成パイプライン。改善が続く限り refine し、全 attempt の最高 score を最終結果に採用する。
     manual_plan を渡すと LLM Plan フェーズをスキップし、人間が立てた構想 (季語/季節/情景/心情) を
     そのまま compose に流す (手動構想モード)。"""
@@ -384,7 +386,8 @@ async def generate_tanka_pipeline(theme: str, max_refines: int | None = None,
     attempt = 0
 
     while True:
-        r = _score_one(validator, composition, season_hint, kigo_hint, theme, strict_disputed=strict)
+        r = _score_one(validator, composition, season_hint, kigo_hint, theme, strict_disputed=strict,
+                       weight_overrides=weight_overrides)
         score = r["score"]
         score_history.append(score)
         if r["tanka_obj"] is not None and score > best_score:

@@ -198,7 +198,7 @@ def test_run_tanka_threads_self_critique_override_to_pipeline(monkeypatch):
     captured = {}
 
     async def fake_pipeline(theme, max_refines=None, model=None, manual_plan=None, self_critique=None,
-                            strict_disputed=None):
+                            strict_disputed=None, weight_overrides=None):
         captured["self_critique"] = self_critique
         captured["strict_disputed"] = strict_disputed
         yield {"type": "complete", "tanka": "a\nb\nc\nd\ne", "plan": "p", "moras": [5, 7, 5, 7, 7],
