@@ -7,12 +7,16 @@
 # 例:
 #   ./eval.sh baseline
 #   TANKA_SELF_CRITIQUE=0 docker compose up -d backend && ./eval.sh no-self-critique
+#   TANKA_EVAL_MODEL=llm-jp-4-8b-instruct ./eval.sh instruct-x12 eval_themes_x12.json
 #
 # 注意:
 #   - variant の設定 (env var) は backend コンテナ側に効かせる必要がある。
 #     つまり「docker compose up -d で backend を変えた状態」を作ってから eval.sh を回す。
 #     eval.sh 自身は backend の挙動を変えない (HTTP client にすぎない)。
 #   - 1 セッション = 1 variant の集計単位。お題は順次実行 (同一セッションで並行不可)。
+#   - TANKA_EVAL_MODEL はこの例外で、eval.sh がセッション固定モデル (#20) として backend に渡す。
+#     グローバル切替 (POST /api/model) と違い、run 中の切替操作に影響されない。
+#     未指定ならグローバル現在モデルで走る (従来どおり)。モデル名は variant 名にも含めること。
 
 set -euo pipefail
 
@@ -49,10 +53,33 @@ N=${#THEME_LINES[@]}
 echo "Loaded $N themes."
 echo ""
 
-# 専用セッション作成
-SID=$(curl -s -X POST "$BACKEND/api/sessions" -H 'Content-Type: application/json' \
-  -d "{\"title\": \"[eval] $VARIANT $TS\"}" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+# 専用セッション作成 (TANKA_EVAL_MODEL があればセッション固定モデル #20 で作る)
+EVAL_MODEL="${TANKA_EVAL_MODEL:-}"
+SESSION_PAYLOAD=$(python3 -c "
+import json, sys
+payload = {'title': '[eval] ' + sys.argv[1]}
+if sys.argv[2]:
+    payload['model'] = sys.argv[2]
+print(json.dumps(payload))
+" "$VARIANT $TS" "$EVAL_MODEL")
+SESSION_RESP=$(curl -s -X POST "$BACKEND/api/sessions" -H 'Content-Type: application/json' \
+  -d "$SESSION_PAYLOAD")
+SID=$(echo "$SESSION_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
+if [ -z "$SID" ]; then
+  # モデル名ミス等は backend が 400 + 理由 (model not available in LM Studio) を返す
+  echo "ERROR: session creation failed: $SESSION_RESP" >&2
+  exit 1
+fi
+# 適用確認 (信じずに見る): セッションに固定されたモデルを読み戻す。
+# 空 = 固定なし (グローバル現在モデルで走る)
+SESSION_MODEL=$(curl -s "$BACKEND/api/sessions/$SID" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin).get('model') or '')")
+if [ -n "$EVAL_MODEL" ] && [ "$SESSION_MODEL" != "$EVAL_MODEL" ]; then
+  echo "ERROR: session model mismatch: requested=$EVAL_MODEL got=${SESSION_MODEL:-<none>}" >&2
+  exit 1
+fi
 echo "Session: $SID"
+echo "Model:   ${SESSION_MODEL:-(global current)}"
 echo ""
 
 i=0
@@ -90,6 +117,7 @@ m['_variant'] = '$VARIANT'
 m['_session_id'] = '$SID'
 m['_timestamp'] = '$TS'
 m['_themes_file'] = '$THEMES_FILE'
+m['_model'] = '$SESSION_MODEL' or None  # セッション固定モデル (#20)。None = グローバル現在モデルで実行
 with open('$OUT', 'w') as f:
     json.dump(m, f, ensure_ascii=False, indent=2)
 print(json.dumps(m, ensure_ascii=False, indent=2))
