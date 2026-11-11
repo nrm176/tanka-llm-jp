@@ -73,6 +73,23 @@ cd backend/eval
 `compare.sh` は variant 名を渡すと `results/` 内の最新一致ファイルを自動選択する。
 ファイルパスを直接渡すことも可能。
 
+### モデル A/B (セッション固定)
+
+モデル比較は env ではなく **`TANKA_EVAL_MODEL`** で行う。eval.sh がセッション固定モデル (#20) として
+backend に渡すため、run 中にグローバル切替 (UI / POST /api/model) が起きても測定は汚染されない。
+指定モデルが LM Studio に無い・固定が効かない場合は開始前に fail-loud で止まる。
+使用モデルは結果 JSON の `_model` に記録される (null = グローバル現在モデルで実行)。
+
+```bash
+TANKA_EVAL_MODEL=llm-jp-4-8b-thinking  ./eval.sh thinking-x12  eval_themes_x12.json
+TANKA_EVAL_MODEL=llm-jp-4-8b-instruct  ./eval.sh instruct-x12  eval_themes_x12.json
+./compare.sh thinking-x12 instruct-x12
+```
+
+事前に各モデルを `lms load <model> --context-length 32768` で明示ロードしておくこと
+(JIT ロードは context 8192 で載る罠、CLAUDE.md §6.14)。手順の全体は
+`app/docs/model-migration-nonthinking-instruct.md` の runbook を参照。
+
 ---
 
 ## チューニング可能な設定 (環境変数)
