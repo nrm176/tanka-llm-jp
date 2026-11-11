@@ -208,17 +208,37 @@ curl -s http://localhost:8001/api/health | python3 -m json.tool
 #    ロード後、LM Studio 上の正確なモデル ID を確認 (TANKA_EVAL_MODEL はこの ID と一致させる):
 curl -s http://localhost:8001/api/models | python3 -m json.tool
 
-# 2. 互換プローブ (model-compat-qwen3-swallow.md §6 のスクリプトを instruct の ID で実行)
-#    判定: content > 0 なら互換。非-thinking なので通る見込みだが省略しない
-lms load <instruct-model-id> --context-length 32768   # JIT 8192 罠の回避 (§6.14)
+# 2. 明示ロード (JIT 8192 罠の回避, §6.14) + 互換プローブ
+#    プローブ本体は model-compat-qwen3-swallow.md §6 と同一。model だけ環境変数で差し替える。
+#    判定: content > 0 なら互換 (非-thinking なので通る見込みだが省略しない)
+lms load <instruct-model-id> --context-length 32768
+lms ps   # CONTEXT が 32768 であることを確認
+PROBE_MODEL=<instruct-model-id> bash -c 'cd app/backend && uv run python - <<"PY"
+import os, prompts
+from openai import OpenAI
+c = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio", timeout=380)
+plan = "季語: 夕立\n季節: 夏\n情景: ...\n心情: ..."
+msgs = prompts.build_compose_messages("お題", plan, plan_constraint=prompts.build_plan_constraint("夏", "夕立"),
+                                      season_hint="夏", dynamic_fewshot=True)
+stream = c.chat.completions.create(model=os.environ["PROBE_MODEL"], messages=msgs, stream=True, max_tokens=8192)
+content, reasoning, finish = "", "", None
+for ch in stream:
+    d = ch.choices[0].delta
+    content += (d.content or "")
+    reasoning += (d.model_extra or {}).get("reasoning_content") or ""
+    finish = ch.choices[0].finish_reason or finish
+print(len(content), len(reasoning), finish)  # 健全なら content > 0
+PY'
 
 # 3. (任意・8.2 で判断) 失敗記憶のリセット
 # curl -X DELETE http://localhost:8001/api/failures
 
 # 4. arm A: thinking baseline を新尺度で取り直す (fresh reload してから)
+#    両 arm とも TANKA_EVAL_MODEL を必ず明示する。未指定だと「いまロードされているグローバル現在モデル」で
+#    走り、知らないうちに別モデルで測る事故になる。結果 JSON の _model が null の run は arm として使わない
 cd app/backend/eval
-caffeinate -dims ./eval.sh thinking-x12-$(date +%m%d) eval_themes_x12.json   # 既定モデルのまま
-#   (明示するなら TANKA_EVAL_MODEL=llm-jp-4-8b-thinking を付ける。結果 JSON の _model で検証可)
+TANKA_EVAL_MODEL=llm-jp-4-8b-thinking caffeinate -dims \
+  ./eval.sh thinking-x12-$(date +%m%d) eval_themes_x12.json
 
 # 5. arm B: instruct (fresh reload してから)
 TANKA_EVAL_MODEL=<instruct-model-id> caffeinate -dims \
